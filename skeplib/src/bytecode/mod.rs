@@ -30,11 +30,40 @@ pub enum Value {
     Unit,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntBinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntCmpOp {
+    Eq,
+    Neq,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instr {
     LoadConst(Value),
     LoadLocal(usize),
     StoreLocal(usize),
+    CopyLocal {
+        dst: usize,
+        src: usize,
+    },
+    IntOpLocalsToLocal {
+        dst: usize,
+        lhs: usize,
+        rhs: usize,
+        op: IntBinOp,
+    },
     AddLocalToLocal {
         dst: usize,
         src: usize,
@@ -67,6 +96,12 @@ pub enum Instr {
     JumpIfLocalLtConst {
         slot: usize,
         rhs: i64,
+        target: usize,
+    },
+    JumpIfLocalIntCmp {
+        lhs: usize,
+        rhs: usize,
+        op: IntCmpOp,
         target: usize,
     },
     Call {

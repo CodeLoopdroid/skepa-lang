@@ -7,7 +7,7 @@ mod control_flow;
 mod state;
 mod structs;
 
-use crate::bytecode::{BytecodeModule, FunctionChunk, Instr, Value};
+use crate::bytecode::{BytecodeModule, FunctionChunk, Instr, IntBinOp, IntCmpOp, Value};
 
 use super::{BuiltinHost, BuiltinRegistry, VmConfig, VmError, VmErrorKind};
 
@@ -114,6 +114,8 @@ pub(super) fn run_chunk(
             Instr::LoadConst(_)
             | Instr::LoadLocal(_)
             | Instr::StoreLocal(_)
+            | Instr::CopyLocal { .. }
+            | Instr::IntOpLocalsToLocal { .. }
             | Instr::AddLocalToLocal { .. }
             | Instr::AddConstToLocal { .. } => unreachable!(),
             Instr::LoadGlobal(slot) => {
@@ -202,7 +204,10 @@ pub(super) fn run_chunk(
             Instr::AndBool | Instr::OrBool => {
                 arith::logical(&mut frame.stack, instr, function_name, ip)?
             }
-            Instr::Jump(_) | Instr::JumpIfFalse(_) | Instr::JumpIfLocalLtConst { .. } => {
+            Instr::Jump(_)
+            | Instr::JumpIfFalse(_)
+            | Instr::JumpIfLocalLtConst { .. }
+            | Instr::JumpIfLocalIntCmp { .. } => {
                 unreachable!()
             }
             Instr::JumpIfTrue(target) => {
@@ -609,6 +614,61 @@ fn handle_hot_instr(
             frame.ip += 1;
             Ok(true)
         }
+        Instr::CopyLocal { dst, src } => {
+            let Some(v) = frame.read_local_cloned(*src) else {
+                return Err(invalid_local_slot(function_name, ip, *src));
+            };
+            if !frame.write_local_fast(*dst, v) {
+                return Err(invalid_local_slot(function_name, ip, *dst));
+            }
+            frame.ip += 1;
+            Ok(true)
+        }
+        Instr::IntOpLocalsToLocal { dst, lhs, rhs, op } => {
+            let Some(lhs_value) = frame.read_local_cloned(*lhs) else {
+                return Err(invalid_local_slot(function_name, ip, *lhs));
+            };
+            let Some(rhs_value) = frame.read_local_cloned(*rhs) else {
+                return Err(invalid_local_slot(function_name, ip, *rhs));
+            };
+            match (lhs_value, rhs_value) {
+                (Value::Int(lhs), Value::Int(rhs)) => {
+                    let out = match op {
+                        IntBinOp::Add => lhs + rhs,
+                        IntBinOp::Sub => lhs - rhs,
+                        IntBinOp::Mul => lhs * rhs,
+                        IntBinOp::Div => {
+                            if rhs == 0 {
+                                return Err(err_at(
+                                    VmErrorKind::DivisionByZero,
+                                    "division by zero",
+                                    function_name,
+                                    ip,
+                                ));
+                            }
+                            lhs / rhs
+                        }
+                        IntBinOp::Mod => {
+                            if rhs == 0 {
+                                return Err(err_at(
+                                    VmErrorKind::DivisionByZero,
+                                    "modulo by zero",
+                                    function_name,
+                                    ip,
+                                ));
+                            }
+                            lhs % rhs
+                        }
+                    };
+                    if !frame.write_local_fast(*dst, Value::Int(out)) {
+                        return Err(invalid_local_slot(function_name, ip, *dst));
+                    }
+                    frame.ip += 1;
+                    Ok(true)
+                }
+                _ => Ok(false),
+            }
+        }
         Instr::AddLocalToLocal { dst, src } => {
             let Some(lhs) = frame.read_local_cloned(*dst) else {
                 return Err(invalid_local_slot(function_name, ip, *dst));
@@ -791,6 +851,43 @@ fn handle_hot_instr(
                 _ => Err(err_at(
                     VmErrorKind::TypeMismatch,
                     "JumpIfLocalLtConst expects Int local",
+                    function_name,
+                    ip,
+                )),
+            }
+        }
+        Instr::JumpIfLocalIntCmp {
+            lhs,
+            rhs,
+            op,
+            target,
+        } => {
+            let Some(lhs_value) = frame.read_local_cloned(*lhs) else {
+                return Err(invalid_local_slot(function_name, ip, *lhs));
+            };
+            let Some(rhs_value) = frame.read_local_cloned(*rhs) else {
+                return Err(invalid_local_slot(function_name, ip, *rhs));
+            };
+            match (lhs_value, rhs_value) {
+                (Value::Int(lhs), Value::Int(rhs)) => {
+                    let passed = match op {
+                        IntCmpOp::Eq => lhs == rhs,
+                        IntCmpOp::Neq => lhs != rhs,
+                        IntCmpOp::Lt => lhs < rhs,
+                        IntCmpOp::Lte => lhs <= rhs,
+                        IntCmpOp::Gt => lhs > rhs,
+                        IntCmpOp::Gte => lhs >= rhs,
+                    };
+                    if passed {
+                        frame.ip += 1;
+                    } else {
+                        frame.ip = *target;
+                    }
+                    Ok(true)
+                }
+                _ => Err(err_at(
+                    VmErrorKind::TypeMismatch,
+                    "JumpIfLocalIntCmp expects Int locals",
                     function_name,
                     ip,
                 )),

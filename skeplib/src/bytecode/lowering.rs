@@ -10,7 +10,7 @@ use crate::parser::Parser;
 use crate::resolver::{ModuleGraph, ModuleId, ResolveError, build_export_maps, resolve_project};
 use crate::vm::default_builtin_id;
 
-use super::{BytecodeModule, FunctionChunk, Instr, StructShape, Value};
+use super::{BytecodeModule, FunctionChunk, Instr, IntBinOp, IntCmpOp, StructShape, Value};
 
 pub fn compile_source(source: &str) -> Result<BytecodeModule, DiagnosticBag> {
     let (program, mut diags) = Parser::parse_source(source);
@@ -267,6 +267,8 @@ impl Compiler {
         for param in params {
             if let TypeName::Named(type_name) = &param.ty {
                 ctx.alloc_local_with_named_type(param.name.clone(), type_name.clone());
+            } else if matches!(param.ty, TypeName::Int) {
+                ctx.alloc_local_int(param.name.clone());
             } else {
                 ctx.alloc_local(param.name.clone());
             }
@@ -301,6 +303,8 @@ impl Compiler {
                     param.name.clone(),
                     self.resolve_struct_runtime_name(type_name),
                 );
+            } else if matches!(param.ty, TypeName::Int) {
+                ctx.alloc_local_int(param.name.clone());
             } else {
                 ctx.alloc_local(param.name.clone());
             }
@@ -334,6 +338,8 @@ impl Compiler {
                     param.name.clone(),
                     self.resolve_struct_runtime_name(type_name),
                 );
+            } else if matches!(param.ty, TypeName::Int) {
+                ctx.alloc_local_int(param.name.clone());
             } else {
                 ctx.alloc_local(param.name.clone());
             }
@@ -365,25 +371,38 @@ impl Compiler {
     ) {
         match stmt {
             Stmt::Let { name, ty, value } => {
-                self.compile_expr(value, ctx, code);
+                let pre_ctx = ctx.clone();
                 let explicit_named = match ty {
                     Some(TypeName::Named(type_name)) => {
                         Some(self.resolve_struct_runtime_name(type_name))
                     }
                     _ => None,
                 };
+                let explicit_int = matches!(ty, Some(TypeName::Int));
                 let inferred_named = Self::infer_expr_named_type(value, ctx);
                 let slot = if let Some(type_name) = explicit_named.or(inferred_named) {
                     ctx.alloc_local_with_named_type(name.clone(), type_name)
+                } else if explicit_int || Self::infer_expr_is_int(value, &pre_ctx) {
+                    ctx.alloc_local_int(name.clone())
                 } else {
                     ctx.alloc_local(name.clone())
                 };
-                code.push(Instr::StoreLocal(slot));
+                if let Some(instr) =
+                    Self::specialized_local_assign(value, &pre_ctx, slot, ctx.is_int_slot(slot))
+                {
+                    code.push(instr);
+                } else {
+                    let mut expr_ctx = pre_ctx.clone();
+                    self.compile_expr(value, &mut expr_ctx, code);
+                    code.push(Instr::StoreLocal(slot));
+                }
             }
             Stmt::Assign { target, value } => match target {
                 AssignTarget::Ident(name) => {
                     if let Some(slot) = ctx.lookup(name) {
-                        if let Some(instr) = Self::specialized_local_assign(value, ctx, slot) {
+                        if let Some(instr) =
+                            Self::specialized_local_assign(value, ctx, slot, ctx.is_int_slot(slot))
+                        {
                             code.push(instr);
                         } else {
                             self.compile_expr(value, ctx, code);
@@ -999,58 +1018,102 @@ impl Compiler {
         let Expr::Binary { left, op, right } = cond else {
             return None;
         };
-        if *op != BinaryOp::Lt {
-            return None;
+        match (&**left, op, &**right) {
+            (Expr::Ident(name), BinaryOp::Lt, Expr::IntLit(rhs)) => {
+                let slot = ctx.lookup(name)?;
+                if !ctx.is_int_slot(slot) {
+                    return None;
+                }
+                Some(Instr::JumpIfLocalLtConst {
+                    slot,
+                    rhs: *rhs,
+                    target: usize::MAX,
+                })
+            }
+            (Expr::Ident(lhs_name), op, Expr::Ident(rhs_name)) => {
+                let lhs = ctx.lookup(lhs_name)?;
+                let rhs = ctx.lookup(rhs_name)?;
+                if !ctx.is_int_slot(lhs) || !ctx.is_int_slot(rhs) {
+                    return None;
+                }
+                Some(Instr::JumpIfLocalIntCmp {
+                    lhs,
+                    rhs,
+                    op: int_cmp_from_binary(*op)?,
+                    target: usize::MAX,
+                })
+            }
+            _ => None,
         }
-        let Expr::Ident(name) = &**left else {
-            return None;
-        };
-        let Expr::IntLit(rhs) = &**right else {
-            return None;
-        };
-        let slot = ctx.lookup(name)?;
-        Some(Instr::JumpIfLocalLtConst {
-            slot,
-            rhs: *rhs,
-            target: usize::MAX,
-        })
     }
 
-    fn specialized_local_assign(value: &Expr, ctx: &FnCtx, dst: usize) -> Option<Instr> {
+    fn specialized_local_assign(
+        value: &Expr,
+        ctx: &FnCtx,
+        dst: usize,
+        dst_is_int: bool,
+    ) -> Option<Instr> {
+        if let Expr::Ident(name) = value {
+            return Some(Instr::CopyLocal {
+                dst,
+                src: ctx.lookup(name)?,
+            });
+        }
         let Expr::Binary { left, op, right } = value else {
             return None;
         };
-        if *op != BinaryOp::Add {
-            return None;
-        }
-        match (&**left, &**right) {
-            (Expr::Ident(name), Expr::IntLit(rhs)) => {
+        match (&**left, op, &**right) {
+            (Expr::Ident(name), BinaryOp::Add, Expr::IntLit(rhs)) => {
                 let slot = ctx.lookup(name)?;
-                if slot == dst {
+                if slot == dst && ctx.is_int_slot(slot) && dst_is_int {
                     Some(Instr::AddConstToLocal { slot, rhs: *rhs })
                 } else {
                     None
                 }
             }
-            (Expr::IntLit(rhs), Expr::Ident(name)) => {
+            (Expr::IntLit(rhs), BinaryOp::Add, Expr::Ident(name)) => {
                 let slot = ctx.lookup(name)?;
-                if slot == dst {
+                if slot == dst && ctx.is_int_slot(slot) && dst_is_int {
                     Some(Instr::AddConstToLocal { slot, rhs: *rhs })
                 } else {
                     None
                 }
             }
-            (Expr::Ident(left_name), Expr::Ident(right_name)) => {
+            (Expr::Ident(left_name), BinaryOp::Add, Expr::Ident(right_name)) => {
                 let left_slot = ctx.lookup(left_name)?;
                 let right_slot = ctx.lookup(right_name)?;
+                if !ctx.is_int_slot(left_slot)
+                    || !ctx.is_int_slot(right_slot)
+                    || !dst_is_int
+                {
+                    return None;
+                }
                 if left_slot == dst {
                     Some(Instr::AddLocalToLocal {
                         dst: left_slot,
                         src: right_slot,
                     })
                 } else {
-                    None
+                    Some(Instr::IntOpLocalsToLocal {
+                        dst,
+                        lhs: left_slot,
+                        rhs: right_slot,
+                        op: IntBinOp::Add,
+                    })
                 }
+            }
+            (Expr::Ident(left_name), op, Expr::Ident(right_name)) => {
+                let lhs = ctx.lookup(left_name)?;
+                let rhs = ctx.lookup(right_name)?;
+                if !ctx.is_int_slot(lhs) || !ctx.is_int_slot(rhs) || !dst_is_int {
+                    return None;
+                }
+                Some(Instr::IntOpLocalsToLocal {
+                    dst,
+                    lhs,
+                    rhs,
+                    op: int_binop_from_binary(*op)?,
+                })
             }
             _ => None,
         }
@@ -1096,6 +1159,9 @@ impl Compiler {
         match &mut code[at] {
             Instr::JumpIfFalse(existing) => *existing = target,
             Instr::JumpIfLocalLtConst {
+                target: existing, ..
+            } => *existing = target,
+            Instr::JumpIfLocalIntCmp {
                 target: existing, ..
             } => *existing = target,
             instr => unreachable!("expected jump-false instruction, found {instr:?}"),
@@ -1198,6 +1264,24 @@ impl Compiler {
             Expr::Ident(name) => ctx.named_type(name),
             Expr::StructLit { name, .. } => Some(name.clone()),
             _ => None,
+        }
+    }
+
+    fn infer_expr_is_int(expr: &Expr, ctx: &FnCtx) -> bool {
+        match expr {
+            Expr::IntLit(_) => true,
+            Expr::Ident(name) => ctx.lookup(name).is_some_and(|slot| ctx.is_int_slot(slot)),
+            Expr::Unary { op, expr } => {
+                matches!(op, UnaryOp::Neg | UnaryOp::Pos) && Self::infer_expr_is_int(expr, ctx)
+            }
+            Expr::Binary { left, op, right } => {
+                matches!(
+                    op,
+                    BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod
+                ) && Self::infer_expr_is_int(left, ctx)
+                    && Self::infer_expr_is_int(right, ctx)
+            }
+            _ => false,
         }
     }
 
@@ -1513,10 +1597,11 @@ struct LoopCtx {
     break_jumps: Vec<usize>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct FnCtx {
     locals: HashMap<String, usize>,
     local_named_types: HashMap<String, String>,
+    local_int_slots: HashSet<usize>,
     next_local: usize,
 }
 
@@ -1546,6 +1631,12 @@ impl FnCtx {
         slot
     }
 
+    fn alloc_local_int(&mut self, name: String) -> usize {
+        let slot = self.alloc_local(name);
+        self.local_int_slots.insert(slot);
+        slot
+    }
+
     fn alloc_anonymous_local(&mut self) -> usize {
         let slot = self.next_local;
         self.next_local += 1;
@@ -1558,6 +1649,33 @@ impl FnCtx {
 
     fn named_type(&self, name: &str) -> Option<String> {
         self.local_named_types.get(name).cloned()
+    }
+
+    fn is_int_slot(&self, slot: usize) -> bool {
+        self.local_int_slots.contains(&slot)
+    }
+}
+
+fn int_binop_from_binary(op: BinaryOp) -> Option<IntBinOp> {
+    match op {
+        BinaryOp::Add => Some(IntBinOp::Add),
+        BinaryOp::Sub => Some(IntBinOp::Sub),
+        BinaryOp::Mul => Some(IntBinOp::Mul),
+        BinaryOp::Div => Some(IntBinOp::Div),
+        BinaryOp::Mod => Some(IntBinOp::Mod),
+        _ => None,
+    }
+}
+
+fn int_cmp_from_binary(op: BinaryOp) -> Option<IntCmpOp> {
+    match op {
+        BinaryOp::EqEq => Some(IntCmpOp::Eq),
+        BinaryOp::Neq => Some(IntCmpOp::Neq),
+        BinaryOp::Lt => Some(IntCmpOp::Lt),
+        BinaryOp::Lte => Some(IntCmpOp::Lte),
+        BinaryOp::Gt => Some(IntCmpOp::Gt),
+        BinaryOp::Gte => Some(IntCmpOp::Gte),
+        _ => None,
     }
 }
 

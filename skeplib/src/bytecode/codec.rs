@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use super::{BytecodeModule, FunctionChunk, Instr, StructShape, Value};
+use super::{BytecodeModule, FunctionChunk, Instr, IntBinOp, IntCmpOp, StructShape, Value};
 
 impl BytecodeModule {
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -113,6 +113,33 @@ fn write_str(out: &mut Vec<u8>, s: &str) {
     out.extend_from_slice(s.as_bytes());
 }
 
+fn write_int_binop(out: &mut Vec<u8>, op: IntBinOp) {
+    write_u8(
+        out,
+        match op {
+            IntBinOp::Add => 0,
+            IntBinOp::Sub => 1,
+            IntBinOp::Mul => 2,
+            IntBinOp::Div => 3,
+            IntBinOp::Mod => 4,
+        },
+    );
+}
+
+fn write_int_cmpop(out: &mut Vec<u8>, op: IntCmpOp) {
+    write_u8(
+        out,
+        match op {
+            IntCmpOp::Eq => 0,
+            IntCmpOp::Neq => 1,
+            IntCmpOp::Lt => 2,
+            IntCmpOp::Lte => 3,
+            IntCmpOp::Gt => 4,
+            IntCmpOp::Gte => 5,
+        },
+    );
+}
+
 fn encode_value(v: &Value, out: &mut Vec<u8>) {
     match v {
         Value::Int(n) => {
@@ -179,6 +206,18 @@ fn encode_instr(i: &Instr, out: &mut Vec<u8>) {
             write_u8(out, 2);
             write_u32(out, *s as u32);
         }
+        Instr::CopyLocal { dst, src } => {
+            write_u8(out, 56);
+            write_u32(out, *dst as u32);
+            write_u32(out, *src as u32);
+        }
+        Instr::IntOpLocalsToLocal { dst, lhs, rhs, op } => {
+            write_u8(out, 57);
+            write_u32(out, *dst as u32);
+            write_u32(out, *lhs as u32);
+            write_u32(out, *rhs as u32);
+            write_int_binop(out, *op);
+        }
         Instr::AddLocalToLocal { dst, src } => {
             write_u8(out, 48);
             write_u32(out, *dst as u32);
@@ -229,6 +268,18 @@ fn encode_instr(i: &Instr, out: &mut Vec<u8>) {
             write_u8(out, 46);
             write_u32(out, *slot as u32);
             write_i64(out, *rhs);
+            write_u32(out, *target as u32);
+        }
+        Instr::JumpIfLocalIntCmp {
+            lhs,
+            rhs,
+            op,
+            target,
+        } => {
+            write_u8(out, 58);
+            write_u32(out, *lhs as u32);
+            write_u32(out, *rhs as u32);
+            write_int_cmpop(out, *op);
             write_u32(out, *target as u32);
         }
         Instr::Call { name, argc } => {
@@ -357,6 +408,29 @@ struct Reader<'a> {
     bytes: &'a [u8],
     idx: usize,
 }
+
+fn read_int_binop(rd: &mut Reader<'_>) -> Result<IntBinOp, String> {
+    match rd.read_u8()? {
+        0 => Ok(IntBinOp::Add),
+        1 => Ok(IntBinOp::Sub),
+        2 => Ok(IntBinOp::Mul),
+        3 => Ok(IntBinOp::Div),
+        4 => Ok(IntBinOp::Mod),
+        tag => Err(format!("Unknown int binop tag {tag}")),
+    }
+}
+
+fn read_int_cmpop(rd: &mut Reader<'_>) -> Result<IntCmpOp, String> {
+    match rd.read_u8()? {
+        0 => Ok(IntCmpOp::Eq),
+        1 => Ok(IntCmpOp::Neq),
+        2 => Ok(IntCmpOp::Lt),
+        3 => Ok(IntCmpOp::Lte),
+        4 => Ok(IntCmpOp::Gt),
+        5 => Ok(IntCmpOp::Gte),
+        tag => Err(format!("Unknown int cmpop tag {tag}")),
+    }
+}
 impl<'a> Reader<'a> {
     fn read_exact(&mut self, n: usize) -> Result<&'a [u8], String> {
         if self.idx + n > self.bytes.len() {
@@ -441,6 +515,16 @@ fn decode_instr(rd: &mut Reader<'_>) -> Result<Instr, String> {
         0 => Instr::LoadConst(decode_value(rd)?),
         1 => Instr::LoadLocal(rd.read_u32()? as usize),
         2 => Instr::StoreLocal(rd.read_u32()? as usize),
+        56 => Instr::CopyLocal {
+            dst: rd.read_u32()? as usize,
+            src: rd.read_u32()? as usize,
+        },
+        57 => Instr::IntOpLocalsToLocal {
+            dst: rd.read_u32()? as usize,
+            lhs: rd.read_u32()? as usize,
+            rhs: rd.read_u32()? as usize,
+            op: read_int_binop(rd)?,
+        },
         48 => Instr::AddLocalToLocal {
             dst: rd.read_u32()? as usize,
             src: rd.read_u32()? as usize,
@@ -473,6 +557,12 @@ fn decode_instr(rd: &mut Reader<'_>) -> Result<Instr, String> {
         46 => Instr::JumpIfLocalLtConst {
             slot: rd.read_u32()? as usize,
             rhs: rd.read_i64()?,
+            target: rd.read_u32()? as usize,
+        },
+        58 => Instr::JumpIfLocalIntCmp {
+            lhs: rd.read_u32()? as usize,
+            rhs: rd.read_u32()? as usize,
+            op: read_int_cmpop(rd)?,
             target: rd.read_u32()? as usize,
         },
         24 => Instr::Call {
