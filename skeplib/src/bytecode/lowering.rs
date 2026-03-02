@@ -400,17 +400,19 @@ impl Compiler {
                 AssignTarget::Index { base, index } => {
                     if let Some((root, indices)) = Self::flatten_index_target(base, index) {
                         if let Some(slot) = ctx.lookup(&root) {
-                            code.push(Instr::LoadLocal(slot));
-                            for idx in &indices {
-                                self.compile_expr(idx, ctx, code);
-                            }
-                            self.compile_expr(value, ctx, code);
                             if indices.len() == 1 {
-                                code.push(Instr::ArraySet);
+                                self.compile_expr(indices[0], ctx, code);
+                                self.compile_expr(value, ctx, code);
+                                code.push(Instr::ArraySetLocal(slot));
                             } else {
+                                code.push(Instr::LoadLocal(slot));
+                                for idx in &indices {
+                                    self.compile_expr(idx, ctx, code);
+                                }
+                                self.compile_expr(value, ctx, code);
                                 code.push(Instr::ArraySetChain(indices.len()));
+                                code.push(Instr::StoreLocal(slot));
                             }
-                            code.push(Instr::StoreLocal(slot));
                         } else {
                             self.error(format!("Unknown local `{root}` in index assignment"));
                         }

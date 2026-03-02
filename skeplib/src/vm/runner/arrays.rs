@@ -2,6 +2,8 @@ use crate::bytecode::Value;
 use crate::vm::{VmError, VmErrorKind};
 use std::rc::Rc;
 
+use super::state::CallFrame;
+
 fn string_scalar_len(s: &str) -> i64 {
     if s.is_ascii() {
         s.len() as i64
@@ -153,6 +155,66 @@ pub(super) fn array_set(
     }
     items[idx as usize] = val;
     stack.push(Value::Array(Rc::<[Value]>::from(items)));
+    Ok(())
+}
+
+pub(super) fn array_set_local(
+    frame: &mut CallFrame<'_>,
+    slot: usize,
+    function_name: &str,
+    ip: usize,
+) -> Result<(), VmError> {
+    let Some(val) = frame.stack.pop() else {
+        return Err(super::err_at(
+            VmErrorKind::StackUnderflow,
+            "ArraySetLocal expects value",
+            function_name,
+            ip,
+        ));
+    };
+    let Some(idx_v) = frame.stack.pop() else {
+        return Err(super::err_at(
+            VmErrorKind::StackUnderflow,
+            "ArraySetLocal expects index",
+            function_name,
+            ip,
+        ));
+    };
+    let Value::Int(idx) = idx_v else {
+        return Err(super::err_at(
+            VmErrorKind::TypeMismatch,
+            "ArraySetLocal index must be Int",
+            function_name,
+            ip,
+        ));
+    };
+    let Some(local) = frame.locals.get_mut(slot) else {
+        return Err(super::err_at(
+            VmErrorKind::InvalidLocal,
+            format!("Invalid local slot {slot}"),
+            function_name,
+            ip,
+        ));
+    };
+    let Value::Array(items) = local else {
+        return Err(super::err_at(
+            VmErrorKind::TypeMismatch,
+            "ArraySetLocal expects Array local",
+            function_name,
+            ip,
+        ));
+    };
+    if idx < 0 || idx as usize >= items.len() {
+        return Err(super::err_at(
+            VmErrorKind::IndexOutOfBounds,
+            format!("Array index {} out of bounds (len={})", idx, items.len()),
+            function_name,
+            ip,
+        ));
+    }
+
+    let items_mut = Rc::make_mut(items);
+    items_mut[idx as usize] = val;
     Ok(())
 }
 

@@ -88,6 +88,7 @@ pub enum Instr {
     MakeArrayRepeat(usize),
     ArrayGet,
     ArraySet,
+    ArraySetLocal(usize),
     ArraySetChain(usize),
     ArrayLen,
     MakeStruct {
