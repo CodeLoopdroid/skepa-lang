@@ -16,6 +16,7 @@ const DEFAULT_WARMUPS: usize = 4;
 const DEFAULT_RUNS: usize = 15;
 
 const LOOP_ITERATIONS: usize = 4_000_000;
+const ARITH_ITERATIONS: usize = 4_000_000;
 const CALL_ITERATIONS: usize = 2_000_000;
 const ARRAY_ITERATIONS: usize = 1_600_000;
 const STRUCT_ITERATIONS: usize = 1_000_000;
@@ -35,6 +36,7 @@ struct CliOptions {
 
 struct WorkloadConfig {
     loop_iterations: usize,
+    arith_iterations: usize,
     call_iterations: usize,
     array_iterations: usize,
     struct_iterations: usize,
@@ -269,6 +271,8 @@ fn benchmark_cases(
 
     let loop_module =
         compile_source(&src_loop_accumulate(workloads.loop_iterations)).map_err(format_diags)?;
+    let arith_module =
+        compile_source(&src_arith_workload(workloads.arith_iterations)).map_err(format_diags)?;
     let call_module = compile_source(&src_function_call_chain(workloads.call_iterations))
         .map_err(format_diags)?;
     let array_module =
@@ -361,6 +365,11 @@ fn benchmark_cases(
             name: "runtime_loop_heavy",
             kind: CaseKind::Library,
             runner: Box::new(move || run_module(&loop_module)),
+        },
+        BenchCase {
+            name: "runtime_arith_heavy",
+            kind: CaseKind::Library,
+            runner: Box::new(move || run_module(&arith_module)),
         },
         BenchCase {
             name: "runtime_call_heavy",
@@ -614,6 +623,7 @@ fn workload_config(opts: &CliOptions) -> WorkloadConfig {
     let _ = opts;
     WorkloadConfig {
         loop_iterations: LOOP_ITERATIONS,
+        arith_iterations: ARITH_ITERATIONS,
         call_iterations: CALL_ITERATIONS,
         array_iterations: ARRAY_ITERATIONS,
         struct_iterations: STRUCT_ITERATIONS,
@@ -1107,6 +1117,24 @@ fn main() -> Int {{
     i = step(i);
   }}
   return i;
+}}
+"#
+    )
+}
+
+fn src_arith_workload(iterations: usize) -> String {
+    format!(
+        r#"
+fn main() -> Int {{
+  let i = 1;
+  let acc = 17;
+  while (i < {iterations}) {{
+    acc = acc + ((i * 3) % 97);
+    acc = acc - (i % 11);
+    acc = acc + ((acc / 3) % 29);
+    i = i + 1;
+  }}
+  return acc;
 }}
 "#
     )
