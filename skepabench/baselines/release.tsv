@@ -1,0 +1,20 @@
+warmups	2
+runs	9
+profile	release
+case	kind	status	median_ms	min_ms	max_ms	reason
+compile_small_parse	lib	measured	0.012	0.011	0.012	
+compile_small_resolve	lib	measured	0.164	0.126	0.173	
+compile_small_sema	lib	measured	0.021	0.021	0.028	
+compile_small_codegen	lib	measured	0.033	0.025	0.044	
+compile_medium_resolve	lib	measured	0.392	0.357	0.535	
+compile_medium_sema	lib	measured	0.075	0.075	0.078	
+compile_medium_codegen	lib	measured	0.076	0.075	0.084	
+runtime_loop_heavy	lib	measured	32.695	32.223	33.064	
+runtime_call_heavy	lib	measured	25.663	25.191	28.756	
+runtime_array_heavy	lib	measured	36.278	35.020	37.827	
+runtime_struct_heavy	lib	measured	18.325	18.268	18.921	
+runtime_string_heavy	lib	measured	10.849	10.507	11.339	
+cli_small_check	cli	measured	8.159	7.545	8.692	
+cli_small_run	cli	measured	8.345	7.999	8.863	
+cli_medium_check	cli	measured	8.827	8.298	8.990	
+cli_medium_run	cli	measured	9.465	9.295	10.134	

@@ -21,6 +21,9 @@ struct CliOptions {
     profile: String,
     filter: Option<String>,
     json: bool,
+    save_baseline: bool,
+    compare: bool,
+    baseline_path: Option<PathBuf>,
 }
 
 enum CaseKind {
@@ -55,6 +58,31 @@ struct BenchWorkspace {
     root: PathBuf,
     small_file: PathBuf,
     medium_entry: PathBuf,
+}
+
+struct BaselineReport {
+    warmups: usize,
+    runs: usize,
+    profile: String,
+    results: Vec<BaselineRecord>,
+}
+
+struct BaselineRecord {
+    case: String,
+    kind: String,
+    status: String,
+    median_ms: Option<f64>,
+    min_ms: Option<f64>,
+    max_ms: Option<f64>,
+    reason: Option<String>,
+}
+
+struct CompareRow {
+    case: String,
+    current_ms: f64,
+    baseline_ms: f64,
+    delta_ms: f64,
+    delta_pct: f64,
 }
 
 fn main() -> ExitCode {
@@ -96,6 +124,31 @@ fn run() -> Result<(), String> {
         print_table_report(&opts, &results);
     }
 
+    if opts.save_baseline {
+        let baseline_path = opts
+            .baseline_path
+            .clone()
+            .unwrap_or_else(|| default_baseline_path(&opts.profile));
+        write_baseline(&baseline_path, &opts, &results)?;
+        if !opts.json {
+            println!("saved baseline to {}", baseline_path.display());
+        }
+    }
+
+    if opts.compare {
+        let baseline_path = opts
+            .baseline_path
+            .clone()
+            .unwrap_or_else(|| default_baseline_path(&opts.profile));
+        let baseline = load_baseline(&baseline_path)?;
+        let rows = compare_results(&baseline, &results);
+        if opts.json {
+            println!("{}", render_compare_json(&baseline_path, &rows));
+        } else {
+            print_compare_report(&baseline_path, &rows);
+        }
+    }
+
     Ok(())
 }
 
@@ -105,6 +158,9 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<CliOptions, Stri
     let mut profile = String::from("debug");
     let mut filter = None;
     let mut json = false;
+    let mut save_baseline = false;
+    let mut compare = false;
+    let mut baseline_path = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -142,9 +198,21 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<CliOptions, Stri
             "--json" => {
                 json = true;
             }
+            "--save-baseline" => {
+                save_baseline = true;
+            }
+            "--compare" => {
+                compare = true;
+            }
+            "--baseline-path" => {
+                let Some(value) = args.next() else {
+                    return Err("Missing value for --baseline-path".to_string());
+                };
+                baseline_path = Some(PathBuf::from(value));
+            }
             "--help" | "-h" => {
                 return Err(
-                    "Usage: cargo run -p skepabench -- [--warmups N] [--runs N] [--profile debug|release] [--filter SUBSTR] [--json]"
+                    "Usage: cargo run -p skepabench -- [--warmups N] [--runs N] [--profile debug|release] [--filter SUBSTR] [--json] [--save-baseline] [--compare] [--baseline-path PATH]"
                         .to_string(),
                 );
             }
@@ -162,6 +230,9 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<CliOptions, Stri
         profile,
         filter,
         json,
+        save_baseline,
+        compare,
+        baseline_path,
     })
 }
 
@@ -462,57 +533,325 @@ fn print_table_report(opts: &CliOptions, results: &[BenchRecord]) {
 }
 
 fn render_json_report(opts: &CliOptions, results: &[BenchRecord]) -> String {
+    let report = baseline_report_from_results(opts, results);
+    render_report_json(&report)
+}
+
+fn write_baseline(path: &Path, opts: &CliOptions, results: &[BenchRecord]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    let report = baseline_report_from_results(opts, results);
+    fs::write(path, render_baseline_tsv(&report)).map_err(|err| err.to_string())
+}
+
+fn load_baseline(path: &Path) -> Result<BaselineReport, String> {
+    let text = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    parse_baseline_tsv(&text)
+}
+
+fn baseline_report_from_results(opts: &CliOptions, results: &[BenchRecord]) -> BaselineReport {
+    BaselineReport {
+        warmups: opts.warmups,
+        runs: opts.runs,
+        profile: opts.profile.clone(),
+        results: results
+            .iter()
+            .map(|result| match &result.outcome {
+                BenchOutcome::Measured(stats) => BaselineRecord {
+                    case: result.name.to_string(),
+                    kind: result.kind.to_string(),
+                    status: "measured".to_string(),
+                    median_ms: Some(duration_ms(stats.median)),
+                    min_ms: Some(duration_ms(stats.min)),
+                    max_ms: Some(duration_ms(stats.max)),
+                    reason: None,
+                },
+                BenchOutcome::Skipped(reason) => BaselineRecord {
+                    case: result.name.to_string(),
+                    kind: result.kind.to_string(),
+                    status: "skipped".to_string(),
+                    median_ms: None,
+                    min_ms: None,
+                    max_ms: None,
+                    reason: Some(reason.clone()),
+                },
+            })
+            .collect(),
+    }
+}
+
+fn default_baseline_path(profile: &str) -> PathBuf {
+    PathBuf::from("skepabench")
+        .join("baselines")
+        .join(format!("{profile}.tsv"))
+}
+
+fn compare_results(baseline: &BaselineReport, results: &[BenchRecord]) -> Vec<CompareRow> {
+    let mut rows = Vec::new();
+    for result in results {
+        let BenchOutcome::Measured(stats) = &result.outcome else {
+            continue;
+        };
+        let Some(baseline_record) = baseline
+            .results
+            .iter()
+            .find(|record| record.case == result.name && record.status == "measured")
+        else {
+            continue;
+        };
+        let Some(baseline_ms) = baseline_record.median_ms else {
+            continue;
+        };
+        let current_ms = duration_ms(stats.median);
+        let delta_ms = current_ms - baseline_ms;
+        let delta_pct = if baseline_ms == 0.0 {
+            0.0
+        } else {
+            (delta_ms / baseline_ms) * 100.0
+        };
+        rows.push(CompareRow {
+            case: result.name.to_string(),
+            current_ms,
+            baseline_ms,
+            delta_ms,
+            delta_pct,
+        });
+    }
+    rows.sort_by(|a, b| {
+        b.delta_pct
+            .abs()
+            .partial_cmp(&a.delta_pct.abs())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    rows
+}
+
+fn print_compare_report(path: &Path, rows: &[CompareRow]) {
+    println!("baseline {}", path.display());
+    println!(
+        "{:<28} {:>12} {:>12} {:>12} {:>10}",
+        "case", "current_ms", "base_ms", "delta_ms", "delta_pct"
+    );
+    for row in rows {
+        println!(
+            "{:<28} {:>12.3} {:>12.3} {:>12.3} {:>9.1}%",
+            row.case, row.current_ms, row.baseline_ms, row.delta_ms, row.delta_pct
+        );
+    }
+}
+
+fn render_compare_json(path: &Path, rows: &[CompareRow]) -> String {
     let mut out = String::new();
     out.push_str("{\n");
-    out.push_str(&format!("  \"warmups\": {},\n", opts.warmups));
-    out.push_str(&format!("  \"runs\": {},\n", opts.runs));
     out.push_str(&format!(
-        "  \"profile\": \"{}\",\n",
-        json_escape(&opts.profile)
+        "  \"baseline_path\": \"{}\",\n",
+        json_escape(&path.display().to_string())
     ));
-    out.push_str("  \"results\": [\n");
-
-    for (idx, result) in results.iter().enumerate() {
+    out.push_str("  \"rows\": [\n");
+    for (idx, row) in rows.iter().enumerate() {
         out.push_str("    {\n");
         out.push_str(&format!(
             "      \"case\": \"{}\",\n",
-            json_escape(result.name)
+            json_escape(&row.case)
         ));
-        out.push_str(&format!(
-            "      \"kind\": \"{}\",\n",
-            json_escape(result.kind)
-        ));
-        match &result.outcome {
-            BenchOutcome::Measured(stats) => {
-                out.push_str("      \"status\": \"measured\",\n");
-                out.push_str(&format!(
-                    "      \"median_ms\": {:.3},\n",
-                    duration_ms(stats.median)
-                ));
-                out.push_str(&format!(
-                    "      \"min_ms\": {:.3},\n",
-                    duration_ms(stats.min)
-                ));
-                out.push_str(&format!(
-                    "      \"max_ms\": {:.3}\n",
-                    duration_ms(stats.max)
-                ));
-            }
-            BenchOutcome::Skipped(reason) => {
-                out.push_str("      \"status\": \"skipped\",\n");
-                out.push_str(&format!("      \"reason\": \"{}\"\n", json_escape(reason)));
-            }
-        }
+        out.push_str(&format!("      \"current_ms\": {:.3},\n", row.current_ms));
+        out.push_str(&format!("      \"baseline_ms\": {:.3},\n", row.baseline_ms));
+        out.push_str(&format!("      \"delta_ms\": {:.3},\n", row.delta_ms));
+        out.push_str(&format!("      \"delta_pct\": {:.3}\n", row.delta_pct));
         out.push_str("    }");
-        if idx + 1 != results.len() {
+        if idx + 1 != rows.len() {
             out.push(',');
         }
         out.push('\n');
     }
-
     out.push_str("  ]\n");
     out.push('}');
     out
+}
+
+fn render_report_json(report: &BaselineReport) -> String {
+    let mut out = String::new();
+    out.push_str("{\n");
+    out.push_str(&format!("  \"warmups\": {},\n", report.warmups));
+    out.push_str(&format!("  \"runs\": {},\n", report.runs));
+    out.push_str(&format!(
+        "  \"profile\": \"{}\",\n",
+        json_escape(&report.profile)
+    ));
+    out.push_str("  \"results\": [\n");
+    for (idx, record) in report.results.iter().enumerate() {
+        out.push_str("    {\n");
+        out.push_str(&format!(
+            "      \"case\": \"{}\",\n",
+            json_escape(&record.case)
+        ));
+        out.push_str(&format!(
+            "      \"kind\": \"{}\",\n",
+            json_escape(&record.kind)
+        ));
+        out.push_str(&format!(
+            "      \"status\": \"{}\"",
+            json_escape(&record.status)
+        ));
+        if let Some(median_ms) = record.median_ms {
+            out.push_str(",\n");
+            out.push_str(&format!("      \"median_ms\": {:.3},\n", median_ms));
+            out.push_str(&format!(
+                "      \"min_ms\": {:.3},\n",
+                record.min_ms.unwrap_or_default()
+            ));
+            out.push_str(&format!(
+                "      \"max_ms\": {:.3}\n",
+                record.max_ms.unwrap_or_default()
+            ));
+        } else if let Some(reason) = &record.reason {
+            out.push_str(",\n");
+            out.push_str(&format!("      \"reason\": \"{}\"\n", json_escape(reason)));
+        } else {
+            out.push('\n');
+        }
+        out.push_str("    }");
+        if idx + 1 != report.results.len() {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+    out.push_str("  ]\n");
+    out.push('}');
+    out
+}
+
+fn render_baseline_tsv(report: &BaselineReport) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("warmups\t{}\n", report.warmups));
+    out.push_str(&format!("runs\t{}\n", report.runs));
+    out.push_str(&format!("profile\t{}\n", escape_tsv(&report.profile)));
+    out.push_str("case\tkind\tstatus\tmedian_ms\tmin_ms\tmax_ms\treason\n");
+    for record in &report.results {
+        out.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            escape_tsv(&record.case),
+            escape_tsv(&record.kind),
+            escape_tsv(&record.status),
+            record
+                .median_ms
+                .map(|v| format!("{v:.3}"))
+                .unwrap_or_default(),
+            record.min_ms.map(|v| format!("{v:.3}")).unwrap_or_default(),
+            record.max_ms.map(|v| format!("{v:.3}")).unwrap_or_default(),
+            escape_tsv(record.reason.as_deref().unwrap_or_default()),
+        ));
+    }
+    out
+}
+
+fn parse_baseline_tsv(text: &str) -> Result<BaselineReport, String> {
+    let mut lines = text.lines();
+    let warmups = parse_header_usize(lines.next(), "warmups")?;
+    let runs = parse_header_usize(lines.next(), "runs")?;
+    let profile = parse_header_string(lines.next(), "profile")?;
+    let Some(header) = lines.next() else {
+        return Err("baseline file missing results header".to_string());
+    };
+    if header != "case\tkind\tstatus\tmedian_ms\tmin_ms\tmax_ms\treason" {
+        return Err("baseline file has invalid results header".to_string());
+    }
+
+    let mut results = Vec::new();
+    for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        let cols: Vec<_> = line.split('\t').collect();
+        if cols.len() != 7 {
+            return Err(format!("baseline row has invalid column count: {line}"));
+        }
+        results.push(BaselineRecord {
+            case: unescape_tsv(cols[0])?,
+            kind: unescape_tsv(cols[1])?,
+            status: unescape_tsv(cols[2])?,
+            median_ms: parse_optional_f64(cols[3])?,
+            min_ms: parse_optional_f64(cols[4])?,
+            max_ms: parse_optional_f64(cols[5])?,
+            reason: parse_optional_string(cols[6])?,
+        });
+    }
+
+    Ok(BaselineReport {
+        warmups,
+        runs,
+        profile,
+        results,
+    })
+}
+
+fn parse_header_usize(line: Option<&str>, key: &str) -> Result<usize, String> {
+    let value = parse_header_string(line, key)?;
+    value
+        .parse::<usize>()
+        .map_err(|_| format!("baseline {key} value is not a usize"))
+}
+
+fn parse_header_string(line: Option<&str>, key: &str) -> Result<String, String> {
+    let Some(line) = line else {
+        return Err(format!("baseline file missing `{key}` header"));
+    };
+    let Some((found, value)) = line.split_once('\t') else {
+        return Err(format!("baseline `{key}` header is malformed"));
+    };
+    if found != key {
+        return Err(format!("baseline header order mismatch: expected `{key}`"));
+    }
+    unescape_tsv(value)
+}
+
+fn parse_optional_f64(raw: &str) -> Result<Option<f64>, String> {
+    if raw.is_empty() {
+        Ok(None)
+    } else {
+        raw.parse::<f64>()
+            .map(Some)
+            .map_err(|_| format!("invalid float value `{raw}` in baseline"))
+    }
+}
+
+fn parse_optional_string(raw: &str) -> Result<Option<String>, String> {
+    if raw.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(unescape_tsv(raw)?))
+    }
+}
+
+fn escape_tsv(input: &str) -> String {
+    input
+        .replace('\\', "\\\\")
+        .replace('\t', "\\t")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+}
+
+fn unescape_tsv(input: &str) -> Result<String, String> {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        let Some(next) = chars.next() else {
+            return Err("invalid trailing escape in baseline".to_string());
+        };
+        match next {
+            '\\' => out.push('\\'),
+            't' => out.push('\t'),
+            'n' => out.push('\n'),
+            'r' => out.push('\r'),
+            other => return Err(format!("invalid escape `\\{other}` in baseline")),
+        }
+    }
+    Ok(out)
 }
 
 fn json_escape(input: &str) -> String {
