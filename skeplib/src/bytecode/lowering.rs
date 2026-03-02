@@ -1548,6 +1548,7 @@ fn rewrite_direct_calls_to_indexes(module: &mut BytecodeModule) {
 #[derive(Clone, Copy)]
 enum TrivialDirectCall {
     AddConst(i64),
+    StructFieldAdd(usize),
 }
 
 fn rewrite_trivial_direct_calls(module: &mut BytecodeModule) {
@@ -1565,33 +1566,48 @@ fn rewrite_trivial_direct_calls(module: &mut BytecodeModule) {
 
     for chunk in module.functions.values_mut() {
         for instr in &mut chunk.code {
-            if let Instr::CallIdx { idx, argc } = instr
-                && *argc == 1
-                && let Some(Some(TrivialDirectCall::AddConst(rhs))) = trivial.get(*idx)
-            {
-                *instr = Instr::CallIdxAddConst(*rhs);
+            if let Instr::CallIdx { idx, argc } = instr {
+                match (*argc, trivial.get(*idx)) {
+                    (1, Some(Some(TrivialDirectCall::AddConst(rhs)))) => {
+                        *instr = Instr::CallIdxAddConst(*rhs);
+                    }
+                    (2, Some(Some(TrivialDirectCall::StructFieldAdd(slot)))) => {
+                        *instr = Instr::CallIdxStructFieldAdd(*slot);
+                    }
+                    _ => {}
+                }
             }
         }
     }
 }
 
 fn trivial_direct_call_pattern(chunk: &FunctionChunk) -> Option<TrivialDirectCall> {
-    if chunk.param_count != 1 || chunk.locals_count != 1 {
-        return None;
-    }
     match chunk.code.as_slice() {
         [
             Instr::LoadLocal(0),
             Instr::LoadConst(Value::Int(rhs)),
             Instr::Add,
             Instr::Return,
-        ] => Some(TrivialDirectCall::AddConst(*rhs)),
+        ] if chunk.param_count == 1 && chunk.locals_count == 1 => {
+            Some(TrivialDirectCall::AddConst(*rhs))
+        }
         [
             Instr::LoadConst(Value::Int(rhs)),
             Instr::LoadLocal(0),
             Instr::Add,
             Instr::Return,
-        ] => Some(TrivialDirectCall::AddConst(*rhs)),
+        ] if chunk.param_count == 1 && chunk.locals_count == 1 => {
+            Some(TrivialDirectCall::AddConst(*rhs))
+        }
+        [
+            Instr::LoadLocal(0),
+            Instr::StructGetSlot(field_slot),
+            Instr::LoadLocal(1),
+            Instr::Add,
+            Instr::Return,
+        ] if chunk.param_count == 2 && chunk.locals_count == 2 => {
+            Some(TrivialDirectCall::StructFieldAdd(*field_slot))
+        }
         _ => None,
     }
 }

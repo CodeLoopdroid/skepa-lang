@@ -298,6 +298,51 @@ pub(super) fn run_chunk(
                     }
                 }
             }
+            Instr::CallIdxStructFieldAdd(field_slot) => {
+                let Some(arg) = frame.stack.pop() else {
+                    return Err(err_at(
+                        VmErrorKind::StackUnderflow,
+                        "Stack underflow on CallIdxStructFieldAdd arg",
+                        function_name,
+                        ip,
+                    ));
+                };
+                let Some(receiver) = frame.stack.pop() else {
+                    return Err(err_at(
+                        VmErrorKind::StackUnderflow,
+                        "Stack underflow on CallIdxStructFieldAdd receiver",
+                        function_name,
+                        ip,
+                    ));
+                };
+                let Value::Struct { fields, .. } = receiver else {
+                    return Err(err_at(
+                        VmErrorKind::TypeMismatch,
+                        "CallIdxStructFieldAdd expects Struct receiver",
+                        function_name,
+                        ip,
+                    ));
+                };
+                let Some(field_value) = fields.get(*field_slot) else {
+                    return Err(err_at(
+                        VmErrorKind::TypeMismatch,
+                        format!("Unknown struct field slot `{field_slot}`"),
+                        function_name,
+                        ip,
+                    ));
+                };
+                match (field_value, arg) {
+                    (Value::Int(lhs), Value::Int(rhs)) => frame.stack.push(Value::Int(*lhs + rhs)),
+                    _ => {
+                        return Err(err_at(
+                            VmErrorKind::TypeMismatch,
+                            "CallIdxStructFieldAdd expects Int field and Int argument",
+                            function_name,
+                            ip,
+                        ));
+                    }
+                }
+            }
             Instr::CallValue { argc } => {
                 if frame.stack.len() < *argc + 1 {
                     return Err(err_at(
