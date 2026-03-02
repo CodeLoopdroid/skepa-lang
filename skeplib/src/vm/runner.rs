@@ -150,12 +150,10 @@ pub(super) fn run_chunk(
             Instr::NegInt => arith::neg(&mut frame.stack, function_name, ip)?,
             Instr::NotBool => arith::not_bool(&mut frame.stack, function_name, ip)?,
             Instr::Add => unreachable!(),
-            Instr::SubInt
-            | Instr::MulInt
-            | Instr::DivInt
-            | Instr::LtInt
-            | Instr::GtInt
-            | Instr::GteInt => arith::numeric_binop(&mut frame.stack, instr, function_name, ip)?,
+            Instr::SubInt | Instr::MulInt | Instr::DivInt | Instr::GtInt | Instr::GteInt => {
+                arith::numeric_binop(&mut frame.stack, instr, function_name, ip)?
+            }
+            Instr::LtInt => unreachable!(),
             Instr::LteInt => unreachable!(),
             Instr::ModInt => {
                 let stack = &mut frame.stack;
@@ -567,6 +565,27 @@ fn handle_hot_instr(
             let stack = &mut frame.stack;
             match (l, r) {
                 (Value::Int(l), Value::Int(r)) => stack.push(Value::Bool(l <= r)),
+                (l, r) => {
+                    stack.push(l);
+                    stack.push(r);
+                    arith::numeric_binop(stack, instr, function_name, ip)?;
+                }
+            }
+            frame.ip += 1;
+            Ok(true)
+        }
+        Instr::LtInt => {
+            let Some((l, r)) = frame.pop2() else {
+                return Err(err_at(
+                    VmErrorKind::StackUnderflow,
+                    "int binary op expects lhs/rhs",
+                    function_name,
+                    ip,
+                ));
+            };
+            let stack = &mut frame.stack;
+            match (l, r) {
+                (Value::Int(l), Value::Int(r)) => stack.push(Value::Bool(l < r)),
                 (l, r) => {
                     stack.push(l);
                     stack.push(r);
