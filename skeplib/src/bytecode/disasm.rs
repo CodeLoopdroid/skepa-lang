@@ -40,6 +40,8 @@ fn fmt_instr(i: &Instr) -> String {
         Instr::LoadConst(v) => format!("LoadConst {}", fmt_value(v)),
         Instr::LoadLocal(s) => format!("LoadLocal {s}"),
         Instr::StoreLocal(s) => format!("StoreLocal {s}"),
+        Instr::AddLocalToLocal { dst, src } => format!("AddLocalToLocal dst={dst} src={src}"),
+        Instr::AddConstToLocal { slot, rhs } => format!("AddConstToLocal slot={slot} rhs={rhs}"),
         Instr::LoadGlobal(s) => format!("LoadGlobal {s}"),
         Instr::StoreGlobal(s) => format!("StoreGlobal {s}"),
         Instr::Pop => "Pop".to_string(),

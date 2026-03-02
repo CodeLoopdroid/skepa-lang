@@ -111,7 +111,11 @@ pub(super) fn run_chunk(
             continue;
         }
         match instr {
-            Instr::LoadConst(_) | Instr::LoadLocal(_) | Instr::StoreLocal(_) => unreachable!(),
+            Instr::LoadConst(_)
+            | Instr::LoadLocal(_)
+            | Instr::StoreLocal(_)
+            | Instr::AddLocalToLocal { .. }
+            | Instr::AddConstToLocal { .. } => unreachable!(),
             Instr::LoadGlobal(slot) => {
                 let Some(v) = env.globals.get(*slot).cloned() else {
                     return Err(err_at(
@@ -554,6 +558,39 @@ fn handle_hot_instr(
             }
             frame.ip += 1;
             Ok(true)
+        }
+        Instr::AddLocalToLocal { dst, src } => {
+            let Some(lhs) = frame.read_local_cloned(*dst) else {
+                return Err(invalid_local_slot(function_name, ip, *dst));
+            };
+            let Some(rhs) = frame.read_local_cloned(*src) else {
+                return Err(invalid_local_slot(function_name, ip, *src));
+            };
+            match (lhs, rhs) {
+                (Value::Int(lhs), Value::Int(rhs)) => {
+                    if !frame.write_local_fast(*dst, Value::Int(lhs + rhs)) {
+                        return Err(invalid_local_slot(function_name, ip, *dst));
+                    }
+                    frame.ip += 1;
+                    Ok(true)
+                }
+                _ => Ok(false),
+            }
+        }
+        Instr::AddConstToLocal { slot, rhs } => {
+            let Some(value) = frame.read_local_cloned(*slot) else {
+                return Err(invalid_local_slot(function_name, ip, *slot));
+            };
+            match value {
+                Value::Int(lhs) => {
+                    if !frame.write_local_fast(*slot, Value::Int(lhs + rhs)) {
+                        return Err(invalid_local_slot(function_name, ip, *slot));
+                    }
+                    frame.ip += 1;
+                    Ok(true)
+                }
+                _ => Ok(false),
+            }
         }
         Instr::Add => {
             let Some((l, r)) = frame.pop2() else {

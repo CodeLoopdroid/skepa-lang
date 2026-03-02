@@ -35,6 +35,14 @@ pub enum Instr {
     LoadConst(Value),
     LoadLocal(usize),
     StoreLocal(usize),
+    AddLocalToLocal {
+        dst: usize,
+        src: usize,
+    },
+    AddConstToLocal {
+        slot: usize,
+        rhs: i64,
+    },
     LoadGlobal(usize),
     StoreGlobal(usize),
     Pop,

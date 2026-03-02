@@ -382,10 +382,15 @@ impl Compiler {
             }
             Stmt::Assign { target, value } => match target {
                 AssignTarget::Ident(name) => {
-                    self.compile_expr(value, ctx, code);
                     if let Some(slot) = ctx.lookup(name) {
-                        code.push(Instr::StoreLocal(slot));
+                        if let Some(instr) = Self::specialized_local_assign(value, ctx, slot) {
+                            code.push(instr);
+                        } else {
+                            self.compile_expr(value, ctx, code);
+                            code.push(Instr::StoreLocal(slot));
+                        }
                     } else if let Some(slot) = self.global_slots.get(name).copied() {
+                        self.compile_expr(value, ctx, code);
                         code.push(Instr::StoreGlobal(slot));
                     } else {
                         self.error(format!("Unknown local `{name}` in assignment"));
@@ -961,6 +966,46 @@ impl Compiler {
             rhs: *rhs,
             target: usize::MAX,
         })
+    }
+
+    fn specialized_local_assign(value: &Expr, ctx: &FnCtx, dst: usize) -> Option<Instr> {
+        let Expr::Binary { left, op, right } = value else {
+            return None;
+        };
+        if *op != BinaryOp::Add {
+            return None;
+        }
+        match (&**left, &**right) {
+            (Expr::Ident(name), Expr::IntLit(rhs)) => {
+                let slot = ctx.lookup(name)?;
+                if slot == dst {
+                    Some(Instr::AddConstToLocal { slot, rhs: *rhs })
+                } else {
+                    None
+                }
+            }
+            (Expr::IntLit(rhs), Expr::Ident(name)) => {
+                let slot = ctx.lookup(name)?;
+                if slot == dst {
+                    Some(Instr::AddConstToLocal { slot, rhs: *rhs })
+                } else {
+                    None
+                }
+            }
+            (Expr::Ident(left_name), Expr::Ident(right_name)) => {
+                let left_slot = ctx.lookup(left_name)?;
+                let right_slot = ctx.lookup(right_name)?;
+                if left_slot == dst {
+                    Some(Instr::AddLocalToLocal {
+                        dst: left_slot,
+                        src: right_slot,
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     fn patch_jump_false_target(code: &mut [Instr], at: usize, target: usize) {

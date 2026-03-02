@@ -179,6 +179,16 @@ fn encode_instr(i: &Instr, out: &mut Vec<u8>) {
             write_u8(out, 2);
             write_u32(out, *s as u32);
         }
+        Instr::AddLocalToLocal { dst, src } => {
+            write_u8(out, 48);
+            write_u32(out, *dst as u32);
+            write_u32(out, *src as u32);
+        }
+        Instr::AddConstToLocal { slot, rhs } => {
+            write_u8(out, 49);
+            write_u32(out, *slot as u32);
+            write_i64(out, *rhs);
+        }
         Instr::LoadGlobal(s) => {
             write_u8(out, 3);
             write_u32(out, *s as u32);
@@ -409,6 +419,14 @@ fn decode_instr(rd: &mut Reader<'_>) -> Result<Instr, String> {
         0 => Instr::LoadConst(decode_value(rd)?),
         1 => Instr::LoadLocal(rd.read_u32()? as usize),
         2 => Instr::StoreLocal(rd.read_u32()? as usize),
+        48 => Instr::AddLocalToLocal {
+            dst: rd.read_u32()? as usize,
+            src: rd.read_u32()? as usize,
+        },
+        49 => Instr::AddConstToLocal {
+            slot: rd.read_u32()? as usize,
+            rhs: rd.read_i64()?,
+        },
         3 => Instr::LoadGlobal(rd.read_u32()? as usize),
         4 => Instr::StoreGlobal(rd.read_u32()? as usize),
         5 => Instr::Pop,
