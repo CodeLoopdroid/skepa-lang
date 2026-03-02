@@ -75,4 +75,21 @@ impl<'a> CallFrame<'a> {
             false
         }
     }
+
+    #[inline(always)]
+    pub(super) fn read_local_cloned(&self, slot: usize) -> Option<Value> {
+        if slot < self.locals.len() {
+            // Compiled bytecode keeps frame locals pre-sized, so this is the hot path.
+            Some(unsafe { self.locals.get_unchecked(slot).clone() })
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn pop2(&mut self) -> Option<(Value, Value)> {
+        let rhs = self.stack.pop()?;
+        let lhs = self.stack.pop()?;
+        Some((lhs, rhs))
+    }
 }

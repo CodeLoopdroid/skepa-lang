@@ -548,7 +548,7 @@ fn handle_hot_instr(
         }
         Instr::LoadLocal(slot) => {
             prof.bump_load_local();
-            let Some(v) = frame.locals.get(*slot).cloned() else {
+            let Some(v) = frame.read_local_cloned(*slot) else {
                 return Err(invalid_local_slot(function_name, ip, *slot));
             };
             frame.stack.push(v);
@@ -573,23 +573,15 @@ fn handle_hot_instr(
         }
         Instr::Add => {
             prof.bump_add();
+            let Some((l, r)) = frame.pop2() else {
+                return Err(err_at(
+                    VmErrorKind::StackUnderflow,
+                    "Add expects lhs/rhs",
+                    function_name,
+                    ip,
+                ));
+            };
             let stack = &mut frame.stack;
-            let Some(r) = stack.pop() else {
-                return Err(err_at(
-                    VmErrorKind::StackUnderflow,
-                    "Add expects rhs",
-                    function_name,
-                    ip,
-                ));
-            };
-            let Some(l) = stack.pop() else {
-                return Err(err_at(
-                    VmErrorKind::StackUnderflow,
-                    "Add expects lhs",
-                    function_name,
-                    ip,
-                ));
-            };
             match (l, r) {
                 (Value::Int(a), Value::Int(b)) => stack.push(Value::Int(a + b)),
                 (l, r) => {
@@ -603,24 +595,15 @@ fn handle_hot_instr(
         }
         Instr::LteInt => {
             prof.bump_lte();
+            let Some((l, r)) = frame.pop2() else {
+                return Err(err_at(
+                    VmErrorKind::StackUnderflow,
+                    "int binary op expects lhs/rhs",
+                    function_name,
+                    ip,
+                ));
+            };
             let stack = &mut frame.stack;
-            let Some(r) = stack.pop() else {
-                return Err(err_at(
-                    VmErrorKind::StackUnderflow,
-                    "int binary op expects rhs",
-                    function_name,
-                    ip,
-                ));
-            };
-            let Some(l) = stack.pop() else {
-                stack.push(r);
-                return Err(err_at(
-                    VmErrorKind::StackUnderflow,
-                    "int binary op expects lhs",
-                    function_name,
-                    ip,
-                ));
-            };
             match (l, r) {
                 (Value::Int(l), Value::Int(r)) => stack.push(Value::Bool(l <= r)),
                 (l, r) => {
