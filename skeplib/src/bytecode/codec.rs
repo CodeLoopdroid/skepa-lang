@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use super::{BytecodeModule, FunctionChunk, Instr, StructShape, Value};
+use super::{BytecodeModule, FunctionChunk, Instr, IntLocalConstOp, StructShape, Value};
 
 impl BytecodeModule {
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -187,6 +187,21 @@ fn encode_instr(i: &Instr, out: &mut Vec<u8>) {
         Instr::AddConstToLocal { slot, rhs } => {
             write_u8(out, 49);
             write_u32(out, *slot as u32);
+            write_i64(out, *rhs);
+        }
+        Instr::IntLocalConstOp { slot, op, rhs } => {
+            write_u8(out, 61);
+            write_u32(out, *slot as u32);
+            write_u8(
+                out,
+                match op {
+                    IntLocalConstOp::Add => 0,
+                    IntLocalConstOp::Sub => 1,
+                    IntLocalConstOp::Mul => 2,
+                    IntLocalConstOp::Div => 3,
+                    IntLocalConstOp::Mod => 4,
+                },
+            );
             write_i64(out, *rhs);
         }
         Instr::LoadGlobal(s) => {
@@ -472,6 +487,18 @@ fn decode_instr(rd: &mut Reader<'_>) -> Result<Instr, String> {
         },
         49 => Instr::AddConstToLocal {
             slot: rd.read_u32()? as usize,
+            rhs: rd.read_i64()?,
+        },
+        61 => Instr::IntLocalConstOp {
+            slot: rd.read_u32()? as usize,
+            op: match rd.read_u8()? {
+                0 => IntLocalConstOp::Add,
+                1 => IntLocalConstOp::Sub,
+                2 => IntLocalConstOp::Mul,
+                3 => IntLocalConstOp::Div,
+                4 => IntLocalConstOp::Mod,
+                other => return Err(format!("Unknown IntLocalConstOp tag {other}")),
+            },
             rhs: rd.read_i64()?,
         },
         3 => Instr::LoadGlobal(rd.read_u32()? as usize),

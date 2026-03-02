@@ -10,7 +10,7 @@ use crate::parser::Parser;
 use crate::resolver::{ModuleGraph, ModuleId, ResolveError, build_export_maps, resolve_project};
 use crate::vm::default_builtin_id;
 
-use super::{BytecodeModule, FunctionChunk, Instr, StructShape, Value};
+use super::{BytecodeModule, FunctionChunk, Instr, IntLocalConstOp, StructShape, Value};
 
 pub fn compile_source(source: &str) -> Result<BytecodeModule, DiagnosticBag> {
     let (program, mut diags) = Parser::parse_source(source);
@@ -734,21 +734,25 @@ impl Compiler {
                     code[jmp_end_at] = Instr::Jump(end_label);
                 }
                 _ => {
-                    self.compile_expr(left, ctx, code);
-                    self.compile_expr(right, ctx, code);
-                    match op {
-                        BinaryOp::Add => code.push(Instr::Add),
-                        BinaryOp::Sub => code.push(Instr::SubInt),
-                        BinaryOp::Mul => code.push(Instr::MulInt),
-                        BinaryOp::Div => code.push(Instr::DivInt),
-                        BinaryOp::Mod => code.push(Instr::ModInt),
-                        BinaryOp::EqEq => code.push(Instr::Eq),
-                        BinaryOp::Neq => code.push(Instr::Neq),
-                        BinaryOp::Lt => code.push(Instr::LtInt),
-                        BinaryOp::Lte => code.push(Instr::LteInt),
-                        BinaryOp::Gt => code.push(Instr::GtInt),
-                        BinaryOp::Gte => code.push(Instr::GteInt),
-                        BinaryOp::AndAnd | BinaryOp::OrOr => unreachable!(),
+                    if let Some(instr) = Self::specialized_local_const_expr(op, left, right, ctx) {
+                        code.push(instr);
+                    } else {
+                        self.compile_expr(left, ctx, code);
+                        self.compile_expr(right, ctx, code);
+                        match op {
+                            BinaryOp::Add => code.push(Instr::Add),
+                            BinaryOp::Sub => code.push(Instr::SubInt),
+                            BinaryOp::Mul => code.push(Instr::MulInt),
+                            BinaryOp::Div => code.push(Instr::DivInt),
+                            BinaryOp::Mod => code.push(Instr::ModInt),
+                            BinaryOp::EqEq => code.push(Instr::Eq),
+                            BinaryOp::Neq => code.push(Instr::Neq),
+                            BinaryOp::Lt => code.push(Instr::LtInt),
+                            BinaryOp::Lte => code.push(Instr::LteInt),
+                            BinaryOp::Gt => code.push(Instr::GtInt),
+                            BinaryOp::Gte => code.push(Instr::GteInt),
+                            BinaryOp::AndAnd | BinaryOp::OrOr => unreachable!(),
+                        }
                     }
                 }
             },
@@ -1227,6 +1231,33 @@ impl Compiler {
                 }
             }
         }
+    }
+
+    fn specialized_local_const_expr(
+        op: &BinaryOp,
+        left: &Expr,
+        right: &Expr,
+        ctx: &FnCtx,
+    ) -> Option<Instr> {
+        let Expr::Ident(name) = left else {
+            return None;
+        };
+        let Expr::IntLit(rhs) = right else {
+            return None;
+        };
+        let slot = ctx.lookup(name)?;
+        let op = match op {
+            BinaryOp::Sub => IntLocalConstOp::Sub,
+            BinaryOp::Mul => IntLocalConstOp::Mul,
+            BinaryOp::Div => IntLocalConstOp::Div,
+            BinaryOp::Mod => IntLocalConstOp::Mod,
+            _ => return None,
+        };
+        Some(Instr::IntLocalConstOp {
+            slot,
+            op,
+            rhs: *rhs,
+        })
     }
 
     fn flatten_field_target(target: &AssignTarget) -> Option<(String, Vec<String>)> {

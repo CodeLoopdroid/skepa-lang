@@ -1,4 +1,4 @@
-use super::{BytecodeModule, Instr, Value};
+use super::{BytecodeModule, Instr, IntLocalConstOp, Value};
 
 impl BytecodeModule {
     pub fn disassemble(&self) -> String {
@@ -42,6 +42,16 @@ fn fmt_instr(i: &Instr) -> String {
         Instr::StoreLocal(s) => format!("StoreLocal {s}"),
         Instr::AddLocalToLocal { dst, src } => format!("AddLocalToLocal dst={dst} src={src}"),
         Instr::AddConstToLocal { slot, rhs } => format!("AddConstToLocal slot={slot} rhs={rhs}"),
+        Instr::IntLocalConstOp { slot, op, rhs } => {
+            let op_name = match op {
+                IntLocalConstOp::Add => "Add",
+                IntLocalConstOp::Sub => "Sub",
+                IntLocalConstOp::Mul => "Mul",
+                IntLocalConstOp::Div => "Div",
+                IntLocalConstOp::Mod => "Mod",
+            };
+            format!("IntLocalConstOp slot={slot} op={op_name} rhs={rhs}")
+        }
         Instr::LoadGlobal(s) => format!("LoadGlobal {s}"),
         Instr::StoreGlobal(s) => format!("StoreGlobal {s}"),
         Instr::Pop => "Pop".to_string(),

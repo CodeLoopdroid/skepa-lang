@@ -30,6 +30,15 @@ pub enum Value {
     Unit,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntLocalConstOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instr {
     LoadConst(Value),
@@ -41,6 +50,11 @@ pub enum Instr {
     },
     AddConstToLocal {
         slot: usize,
+        rhs: i64,
+    },
+    IntLocalConstOp {
+        slot: usize,
+        op: IntLocalConstOp,
         rhs: i64,
     },
     LoadGlobal(usize),

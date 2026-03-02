@@ -7,7 +7,7 @@ mod control_flow;
 mod state;
 mod structs;
 
-use crate::bytecode::{BytecodeModule, FunctionChunk, Instr, Value};
+use crate::bytecode::{BytecodeModule, FunctionChunk, Instr, IntLocalConstOp, Value};
 
 use super::{BuiltinHost, BuiltinRegistry, VmConfig, VmError, VmErrorKind};
 
@@ -115,7 +115,8 @@ pub(super) fn run_chunk(
             | Instr::LoadLocal(_)
             | Instr::StoreLocal(_)
             | Instr::AddLocalToLocal { .. }
-            | Instr::AddConstToLocal { .. } => unreachable!(),
+            | Instr::AddConstToLocal { .. }
+            | Instr::IntLocalConstOp { .. } => unreachable!(),
             Instr::LoadGlobal(slot) => {
                 let Some(v) = env.globals.get(*slot).cloned() else {
                     return Err(err_at(
@@ -638,6 +639,46 @@ fn handle_hot_instr(
             Some(Err(())) => Ok(false),
             None => Err(invalid_local_slot(function_name, ip, *slot)),
         },
+        Instr::IntLocalConstOp { slot, op, rhs } => {
+            let Some(value) = frame.locals.get(*slot) else {
+                return Err(invalid_local_slot(function_name, ip, *slot));
+            };
+            match value {
+                Value::Int(lhs) => {
+                    let result = match op {
+                        IntLocalConstOp::Add => Value::Int(*lhs + *rhs),
+                        IntLocalConstOp::Sub => Value::Int(*lhs - *rhs),
+                        IntLocalConstOp::Mul => Value::Int(*lhs * *rhs),
+                        IntLocalConstOp::Div => {
+                            if *rhs == 0 {
+                                return Err(err_at(
+                                    VmErrorKind::DivisionByZero,
+                                    "division by zero",
+                                    function_name,
+                                    ip,
+                                ));
+                            }
+                            Value::Int(*lhs / *rhs)
+                        }
+                        IntLocalConstOp::Mod => {
+                            if *rhs == 0 {
+                                return Err(err_at(
+                                    VmErrorKind::DivisionByZero,
+                                    "modulo by zero",
+                                    function_name,
+                                    ip,
+                                ));
+                            }
+                            Value::Int(*lhs % *rhs)
+                        }
+                    };
+                    frame.stack.push(result);
+                    frame.ip += 1;
+                    Ok(true)
+                }
+                _ => Ok(false),
+            }
+        }
         Instr::StrLen => {
             let Some(value) = frame.stack.pop() else {
                 return Err(err_at(
