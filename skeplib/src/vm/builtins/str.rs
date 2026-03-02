@@ -256,7 +256,7 @@ pub(crate) fn builtin_str_last_index_of(
 
 pub(crate) fn direct_str_len(arg: Value) -> Result<Value, VmError> {
     match arg {
-        Value::String(s) => Ok(Value::Int(scalar_len(&s))),
+        Value::String(s) => Ok(Value::Int(str_len_ref(&s))),
         _ => Err(VmError::new(
             VmErrorKind::TypeMismatch,
             "str.len expects String argument",
@@ -264,10 +264,14 @@ pub(crate) fn direct_str_len(arg: Value) -> Result<Value, VmError> {
     }
 }
 
+pub(crate) fn str_len_ref(s: &str) -> i64 {
+    scalar_len(s)
+}
+
 pub(crate) fn direct_str_index_of_const(arg: Value, needle: &str) -> Result<Value, VmError> {
     match arg {
-        Value::String(s) => match s.find(needle) {
-            Some(byte_idx) => Ok(Value::Int(scalar_prefix_len(&s, byte_idx))),
+        Value::String(s) => match str_index_of_const_ref(&s, needle) {
+            Some(index) => Ok(Value::Int(index)),
             None => Ok(Value::Int(-1)),
         },
         _ => Err(VmError::new(
@@ -275,6 +279,11 @@ pub(crate) fn direct_str_index_of_const(arg: Value, needle: &str) -> Result<Valu
             "str.indexOf expects String, String arguments",
         )),
     }
+}
+
+pub(crate) fn str_index_of_const_ref(s: &str, needle: &str) -> Option<i64> {
+    s.find(needle)
+        .map(|byte_idx| scalar_prefix_len(s, byte_idx))
 }
 
 pub(crate) fn direct_str_slice_const(arg: Value, start: i64, end: i64) -> Result<Value, VmError> {
@@ -291,25 +300,33 @@ pub(crate) fn direct_str_slice_const(arg: Value, start: i64, end: i64) -> Result
             format!("str.slice bounds out of range: start={start}, end={end}, len={len}"),
         ));
     }
-    let out = if s.is_ascii() {
+    let out = str_slice_const_ref(&s, start, end);
+    Ok(Value::String(out.into()))
+}
+
+pub(crate) fn str_slice_const_ref(s: &str, start: i64, end: i64) -> String {
+    if s.is_ascii() {
         s[start as usize..end as usize].to_string()
     } else {
         s.chars()
             .skip(start as usize)
             .take((end - start) as usize)
             .collect()
-    };
-    Ok(Value::String(out.into()))
+    }
 }
 
 pub(crate) fn direct_str_contains_const(arg: Value, needle: &str) -> Result<Value, VmError> {
     match arg {
-        Value::String(s) => Ok(Value::Bool(s.contains(needle))),
+        Value::String(s) => Ok(Value::Bool(str_contains_const_ref(&s, needle))),
         _ => Err(VmError::new(
             VmErrorKind::TypeMismatch,
             "str.contains expects String, String arguments",
         )),
     }
+}
+
+pub(crate) fn str_contains_const_ref(s: &str, needle: &str) -> bool {
+    s.contains(needle)
 }
 
 pub(crate) fn builtin_str_replace(

@@ -1,4 +1,4 @@
-use super::{BytecodeModule, Instr, IntBinOp, IntCmpOp, Value};
+use super::{BytecodeModule, Instr, Value};
 
 impl BytecodeModule {
     pub fn disassemble(&self) -> String {
@@ -40,11 +40,6 @@ fn fmt_instr(i: &Instr) -> String {
         Instr::LoadConst(v) => format!("LoadConst {}", fmt_value(v)),
         Instr::LoadLocal(s) => format!("LoadLocal {s}"),
         Instr::StoreLocal(s) => format!("StoreLocal {s}"),
-        Instr::CopyLocal { dst, src } => format!("CopyLocal dst={dst} src={src}"),
-        Instr::IntOpLocalsToLocal { dst, lhs, rhs, op } => format!(
-            "IntOpLocalsToLocal dst={dst} lhs={lhs} rhs={rhs} op={}",
-            fmt_int_binop(*op)
-        ),
         Instr::AddLocalToLocal { dst, src } => format!("AddLocalToLocal dst={dst} src={src}"),
         Instr::AddConstToLocal { slot, rhs } => format!("AddConstToLocal slot={slot} rhs={rhs}"),
         Instr::LoadGlobal(s) => format!("LoadGlobal {s}"),
@@ -71,15 +66,6 @@ fn fmt_instr(i: &Instr) -> String {
         Instr::JumpIfLocalLtConst { slot, rhs, target } => {
             format!("JumpIfLocalLtConst slot={slot} rhs={rhs} target={target}")
         }
-        Instr::JumpIfLocalIntCmp {
-            lhs,
-            rhs,
-            op,
-            target,
-        } => format!(
-            "JumpIfLocalIntCmp lhs={lhs} rhs={rhs} op={} target={target}",
-            fmt_int_cmpop(*op)
-        ),
         Instr::Call { name, argc } => format!("Call {name} argc={argc}"),
         Instr::CallIdx { idx, argc } => format!("CallIdx {idx} argc={argc}"),
         Instr::CallIdxAddConst(rhs) => format!("CallIdxAddConst {rhs}"),
@@ -94,9 +80,19 @@ fn fmt_instr(i: &Instr) -> String {
         } => format!("CallBuiltin {package}.{name} argc={argc}"),
         Instr::CallBuiltinId { id, argc } => format!("CallBuiltinId {id} argc={argc}"),
         Instr::StrLen => "StrLen".to_string(),
+        Instr::StrLenLocal(slot) => format!("StrLenLocal {slot}"),
         Instr::StrIndexOfConst(needle) => format!("StrIndexOfConst {needle:?}"),
+        Instr::StrIndexOfLocalConst { slot, needle } => {
+            format!("StrIndexOfLocalConst slot={slot} {needle:?}")
+        }
         Instr::StrSliceConst { start, end } => format!("StrSliceConst start={start} end={end}"),
+        Instr::StrSliceLocalConst { slot, start, end } => {
+            format!("StrSliceLocalConst slot={slot} start={start} end={end}")
+        }
         Instr::StrContainsConst(needle) => format!("StrContainsConst {needle:?}"),
+        Instr::StrContainsLocalConst { slot, needle } => {
+            format!("StrContainsLocalConst slot={slot} {needle:?}")
+        }
         Instr::MakeArray(n) => format!("MakeArray {n}"),
         Instr::MakeArrayRepeat(n) => format!("MakeArrayRepeat {n}"),
         Instr::ArrayGet => "ArrayGet".to_string(),
@@ -120,26 +116,5 @@ fn fmt_instr(i: &Instr) -> String {
                 .join(".")
         ),
         Instr::Return => "Return".to_string(),
-    }
-}
-
-fn fmt_int_binop(op: IntBinOp) -> &'static str {
-    match op {
-        IntBinOp::Add => "Add",
-        IntBinOp::Sub => "Sub",
-        IntBinOp::Mul => "Mul",
-        IntBinOp::Div => "Div",
-        IntBinOp::Mod => "Mod",
-    }
-}
-
-fn fmt_int_cmpop(op: IntCmpOp) -> &'static str {
-    match op {
-        IntCmpOp::Eq => "Eq",
-        IntCmpOp::Neq => "Neq",
-        IntCmpOp::Lt => "Lt",
-        IntCmpOp::Lte => "Lte",
-        IntCmpOp::Gt => "Gt",
-        IntCmpOp::Gte => "Gte",
     }
 }

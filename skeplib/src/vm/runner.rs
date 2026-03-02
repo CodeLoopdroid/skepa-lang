@@ -7,7 +7,7 @@ mod control_flow;
 mod state;
 mod structs;
 
-use crate::bytecode::{BytecodeModule, FunctionChunk, Instr, IntBinOp, IntCmpOp, Value};
+use crate::bytecode::{BytecodeModule, FunctionChunk, Instr, Value};
 
 use super::{BuiltinHost, BuiltinRegistry, VmConfig, VmError, VmErrorKind};
 
@@ -204,140 +204,6 @@ pub(super) fn run_chunk(
             }
             Instr::Jump(_) | Instr::JumpIfFalse(_) | Instr::JumpIfLocalLtConst { .. } => {
                 unreachable!()
-            }
-            Instr::CopyLocal { dst, src } => {
-                let Some(v) = frame.locals.get(*src).cloned() else {
-                    return Err(invalid_local_slot(function_name, ip, *src));
-                };
-                if *dst >= frame.locals.len() {
-                    return Err(invalid_local_slot(function_name, ip, *dst));
-                }
-                frame.locals[*dst] = v;
-            }
-            Instr::IntOpLocalsToLocal { dst, lhs, rhs, op } => {
-                let Some(lhs_value) = frame.locals.get(*lhs).cloned() else {
-                    return Err(invalid_local_slot(function_name, ip, *lhs));
-                };
-                let Some(rhs_value) = frame.locals.get(*rhs).cloned() else {
-                    return Err(invalid_local_slot(function_name, ip, *rhs));
-                };
-                let out = match (lhs_value, rhs_value, op) {
-                    (Value::Int(lhs), Value::Int(rhs), IntBinOp::Add) => Value::Int(lhs + rhs),
-                    (Value::Int(lhs), Value::Int(rhs), IntBinOp::Sub) => Value::Int(lhs - rhs),
-                    (Value::Int(lhs), Value::Int(rhs), IntBinOp::Mul) => Value::Int(lhs * rhs),
-                    (Value::Int(lhs), Value::Int(rhs), IntBinOp::Div) => {
-                        if rhs == 0 {
-                            return Err(err_at(
-                                VmErrorKind::DivisionByZero,
-                                "division by zero",
-                                function_name,
-                                ip,
-                            ));
-                        }
-                        Value::Int(lhs / rhs)
-                    }
-                    (Value::Int(lhs), Value::Int(rhs), IntBinOp::Mod) => {
-                        if rhs == 0 {
-                            return Err(err_at(
-                                VmErrorKind::DivisionByZero,
-                                "modulo by zero",
-                                function_name,
-                                ip,
-                            ));
-                        }
-                        Value::Int(lhs % rhs)
-                    }
-                    (lhs, rhs, _) => {
-                        frame.stack.push(lhs);
-                        frame.stack.push(rhs);
-                        let generic = match op {
-                            IntBinOp::Add => Instr::Add,
-                            IntBinOp::Sub => Instr::SubInt,
-                            IntBinOp::Mul => Instr::MulInt,
-                            IntBinOp::Div => Instr::DivInt,
-                            IntBinOp::Mod => Instr::ModInt,
-                        };
-                        match generic {
-                            Instr::Add => arith::add(&mut frame.stack, function_name, ip)?,
-                            Instr::ModInt => arith::mod_int(&mut frame.stack, function_name, ip)?,
-                            _ => arith::numeric_binop(&mut frame.stack, &generic, function_name, ip)?,
-                        }
-                        frame.stack.pop().unwrap_or(Value::Unit)
-                    }
-                };
-                if *dst >= frame.locals.len() {
-                    return Err(invalid_local_slot(function_name, ip, *dst));
-                }
-                frame.locals[*dst] = out;
-            }
-            Instr::JumpIfLocalIntCmp { lhs, rhs, op, target } => {
-                let Some(lhs_value) = frame.locals.get(*lhs).cloned() else {
-                    return Err(invalid_local_slot(function_name, ip, *lhs));
-                };
-                let Some(rhs_value) = frame.locals.get(*rhs).cloned() else {
-                    return Err(invalid_local_slot(function_name, ip, *rhs));
-                };
-                match (lhs_value, rhs_value) {
-                    (Value::Int(lhs), Value::Int(rhs)) => {
-                        let passed = match op {
-                            IntCmpOp::Eq => lhs == rhs,
-                            IntCmpOp::Neq => lhs != rhs,
-                            IntCmpOp::Lt => lhs < rhs,
-                            IntCmpOp::Lte => lhs <= rhs,
-                            IntCmpOp::Gt => lhs > rhs,
-                            IntCmpOp::Gte => lhs >= rhs,
-                        };
-                        if passed {
-                            frame.ip += 1;
-                            continue;
-                        }
-                        frame.ip = *target;
-                        continue;
-                    }
-                    (lhs, rhs) => {
-                        frame.stack.push(lhs);
-                        frame.stack.push(rhs);
-                        let generic = match op {
-                            IntCmpOp::Eq => Instr::Eq,
-                            IntCmpOp::Neq => Instr::Neq,
-                            IntCmpOp::Lt => Instr::LtInt,
-                            IntCmpOp::Lte => Instr::LteInt,
-                            IntCmpOp::Gt => Instr::GtInt,
-                            IntCmpOp::Gte => Instr::GteInt,
-                        };
-                        match generic {
-                            Instr::Eq => arith::eq(&mut frame.stack, function_name, ip)?,
-                            Instr::Neq => arith::neq(&mut frame.stack, function_name, ip)?,
-                            _ => arith::numeric_binop(&mut frame.stack, &generic, function_name, ip)?,
-                        }
-                        let Some(cond) = frame.stack.pop() else {
-                            return Err(err_at(
-                                VmErrorKind::TypeMismatch,
-                                "JumpIfLocalIntCmp expects Bool result",
-                                function_name,
-                                ip,
-                            ));
-                        };
-                        match cond {
-                            Value::Bool(true) => {
-                                frame.ip += 1;
-                                continue;
-                            }
-                            Value::Bool(false) => {
-                                frame.ip = *target;
-                                continue;
-                            }
-                            _ => {
-                                return Err(err_at(
-                                    VmErrorKind::TypeMismatch,
-                                    "JumpIfLocalIntCmp expects Bool result",
-                                    function_name,
-                                    ip,
-                                ));
-                            }
-                        }
-                    }
-                }
             }
             Instr::JumpIfTrue(target) => {
                 if let Some(next_ip) =
@@ -650,9 +516,15 @@ pub(super) fn run_chunk(
                 calls::Site { function_name, ip },
             )?,
             Instr::StrLen
+            | Instr::StrLenLocal(_)
             | Instr::StrIndexOfConst(_)
+            | Instr::StrIndexOfLocalConst { .. }
             | Instr::StrSliceConst { .. }
-            | Instr::StrContainsConst(_) => unreachable!("handled in hot instruction path"),
+            | Instr::StrSliceLocalConst { .. }
+            | Instr::StrContainsConst(_)
+            | Instr::StrContainsLocalConst { .. } => {
+                unreachable!("handled in hot instruction path")
+            }
             Instr::MakeArray(n) => arrays::make_array(&mut frame.stack, *n, function_name, ip)?,
             Instr::MakeArrayRepeat(n) => {
                 arrays::make_array_repeat(&mut frame.stack, *n, function_name, ip)?
@@ -791,6 +663,26 @@ fn handle_hot_instr(
             frame.ip += 1;
             Ok(true)
         }
+        Instr::StrLenLocal(slot) => {
+            let Some(value) = frame.locals.get(*slot) else {
+                return Err(invalid_local_slot(function_name, ip, *slot));
+            };
+            match value {
+                Value::String(s) => frame
+                    .stack
+                    .push(Value::Int(super::builtins::str::str_len_ref(s))),
+                _ => {
+                    return Err(err_at(
+                        VmErrorKind::TypeMismatch,
+                        "StrLenLocal expects String local",
+                        function_name,
+                        ip,
+                    ));
+                }
+            }
+            frame.ip += 1;
+            Ok(true)
+        }
         Instr::StrIndexOfConst(needle) => {
             let Some(value) = frame.stack.pop() else {
                 return Err(err_at(
@@ -805,6 +697,26 @@ fn handle_hot_instr(
                 .push(super::builtins::str::direct_str_index_of_const(
                     value, needle,
                 )?);
+            frame.ip += 1;
+            Ok(true)
+        }
+        Instr::StrIndexOfLocalConst { slot, needle } => {
+            let Some(value) = frame.locals.get(*slot) else {
+                return Err(invalid_local_slot(function_name, ip, *slot));
+            };
+            match value {
+                Value::String(s) => frame.stack.push(Value::Int(
+                    super::builtins::str::str_index_of_const_ref(s, needle).unwrap_or(-1),
+                )),
+                _ => {
+                    return Err(err_at(
+                        VmErrorKind::TypeMismatch,
+                        "StrIndexOfLocalConst expects String local",
+                        function_name,
+                        ip,
+                    ));
+                }
+            }
             frame.ip += 1;
             Ok(true)
         }
@@ -825,6 +737,40 @@ fn handle_hot_instr(
             frame.ip += 1;
             Ok(true)
         }
+        Instr::StrSliceLocalConst { slot, start, end } => {
+            let Some(value) = frame.locals.get(*slot) else {
+                return Err(invalid_local_slot(function_name, ip, *slot));
+            };
+            match value {
+                Value::String(s) => {
+                    let len = super::builtins::str::str_len_ref(s);
+                    if *start < 0 || *end < 0 || *start > *end || *end > len {
+                        return Err(err_at(
+                            VmErrorKind::IndexOutOfBounds,
+                            format!(
+                                "str.slice bounds out of range: start={}, end={}, len={len}",
+                                start, end
+                            ),
+                            function_name,
+                            ip,
+                        ));
+                    }
+                    frame.stack.push(Value::String(
+                        super::builtins::str::str_slice_const_ref(s, *start, *end).into(),
+                    ));
+                }
+                _ => {
+                    return Err(err_at(
+                        VmErrorKind::TypeMismatch,
+                        "StrSliceLocalConst expects String local",
+                        function_name,
+                        ip,
+                    ));
+                }
+            }
+            frame.ip += 1;
+            Ok(true)
+        }
         Instr::StrContainsConst(needle) => {
             let Some(value) = frame.stack.pop() else {
                 return Err(err_at(
@@ -839,6 +785,30 @@ fn handle_hot_instr(
                 .push(super::builtins::str::direct_str_contains_const(
                     value, needle,
                 )?);
+            frame.ip += 1;
+            Ok(true)
+        }
+        Instr::StrContainsLocalConst { slot, needle } => {
+            let Some(value) = frame.locals.get(*slot) else {
+                return Err(invalid_local_slot(function_name, ip, *slot));
+            };
+            match value {
+                Value::String(s) => {
+                    frame
+                        .stack
+                        .push(Value::Bool(super::builtins::str::str_contains_const_ref(
+                            s, needle,
+                        )))
+                }
+                _ => {
+                    return Err(err_at(
+                        VmErrorKind::TypeMismatch,
+                        "StrContainsLocalConst expects String local",
+                        function_name,
+                        ip,
+                    ));
+                }
+            }
             frame.ip += 1;
             Ok(true)
         }
