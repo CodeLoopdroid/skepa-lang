@@ -891,9 +891,16 @@ impl Compiler {
                 code.push(Instr::MakeArrayRepeat(*size));
             }
             Expr::Index { base, index } => {
-                self.compile_expr(base, ctx, code);
-                self.compile_expr(index, ctx, code);
-                code.push(Instr::ArrayGet);
+                if let Expr::Ident(name) = base.as_ref()
+                    && let Some(slot) = ctx.lookup(name)
+                {
+                    self.compile_expr(index, ctx, code);
+                    code.push(Instr::ArrayGetLocal(slot));
+                } else {
+                    self.compile_expr(base, ctx, code);
+                    self.compile_expr(index, ctx, code);
+                    code.push(Instr::ArrayGet);
+                }
             }
             Expr::Field { .. } => {
                 if let Some((base, fields)) = Self::flatten_field_expr(expr) {

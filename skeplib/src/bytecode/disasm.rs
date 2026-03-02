@@ -96,6 +96,7 @@ fn fmt_instr(i: &Instr) -> String {
         Instr::MakeArray(n) => format!("MakeArray {n}"),
         Instr::MakeArrayRepeat(n) => format!("MakeArrayRepeat {n}"),
         Instr::ArrayGet => "ArrayGet".to_string(),
+        Instr::ArrayGetLocal(slot) => format!("ArrayGetLocal {slot}"),
         Instr::ArraySet => "ArraySet".to_string(),
         Instr::ArraySetLocal(slot) => format!("ArraySetLocal {slot}"),
         Instr::ArrayIncLocal(slot) => format!("ArrayIncLocal {slot}"),

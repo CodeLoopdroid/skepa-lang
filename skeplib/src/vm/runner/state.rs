@@ -91,6 +91,62 @@ impl<'a> CallFrame<'a> {
     }
 
     #[inline(always)]
+    pub(super) fn add_const_to_int_local(
+        &mut self,
+        slot: usize,
+        rhs: i64,
+    ) -> Option<Result<(), ()>> {
+        if slot >= self.locals.len() {
+            return None;
+        }
+        match unsafe { self.locals.get_unchecked_mut(slot) } {
+            Value::Int(lhs) => {
+                *lhs += rhs;
+                Some(Ok(()))
+            }
+            _ => Some(Err(())),
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn add_int_local_to_local(
+        &mut self,
+        dst: usize,
+        src: usize,
+    ) -> Option<Result<(), ()>> {
+        if dst >= self.locals.len() || src >= self.locals.len() {
+            return None;
+        }
+        if dst == src {
+            match unsafe { self.locals.get_unchecked_mut(dst) } {
+                Value::Int(value) => {
+                    *value += *value;
+                    Some(Ok(()))
+                }
+                _ => Some(Err(())),
+            }
+        } else if dst < src {
+            let (left, right) = self.locals.split_at_mut(src);
+            match (&mut left[dst], &right[0]) {
+                (Value::Int(dst_value), Value::Int(src_value)) => {
+                    *dst_value += *src_value;
+                    Some(Ok(()))
+                }
+                _ => Some(Err(())),
+            }
+        } else {
+            let (left, right) = self.locals.split_at_mut(dst);
+            match (&mut right[0], &left[src]) {
+                (Value::Int(dst_value), Value::Int(src_value)) => {
+                    *dst_value += *src_value;
+                    Some(Ok(()))
+                }
+                _ => Some(Err(())),
+            }
+        }
+    }
+
+    #[inline(always)]
     pub(super) fn pop2(&mut self) -> Option<(Value, Value)> {
         let rhs = self.stack.pop()?;
         let lhs = self.stack.pop()?;

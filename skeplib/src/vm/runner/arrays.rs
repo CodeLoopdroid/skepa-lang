@@ -99,6 +99,56 @@ pub(super) fn array_get(
     Ok(())
 }
 
+pub(super) fn array_get_local(
+    frame: &mut CallFrame<'_>,
+    slot: usize,
+    function_name: &str,
+    ip: usize,
+) -> Result<(), VmError> {
+    let Some(idx_v) = frame.stack.pop() else {
+        return Err(super::err_at(
+            VmErrorKind::StackUnderflow,
+            "ArrayGetLocal expects index",
+            function_name,
+            ip,
+        ));
+    };
+    let Value::Int(idx) = idx_v else {
+        return Err(super::err_at(
+            VmErrorKind::TypeMismatch,
+            "ArrayGetLocal index must be Int",
+            function_name,
+            ip,
+        ));
+    };
+    let Some(local) = frame.locals.get(slot) else {
+        return Err(super::err_at(
+            VmErrorKind::InvalidLocal,
+            format!("Invalid local slot {slot}"),
+            function_name,
+            ip,
+        ));
+    };
+    let Value::Array(items) = local else {
+        return Err(super::err_at(
+            VmErrorKind::TypeMismatch,
+            "ArrayGetLocal expects Array local",
+            function_name,
+            ip,
+        ));
+    };
+    if idx < 0 || idx as usize >= items.len() {
+        return Err(super::err_at(
+            VmErrorKind::IndexOutOfBounds,
+            format!("Array index {} out of bounds (len={})", idx, items.len()),
+            function_name,
+            ip,
+        ));
+    }
+    frame.stack.push(items[idx as usize].clone());
+    Ok(())
+}
+
 pub(super) fn array_set(
     stack: &mut Vec<Value>,
     function_name: &str,

@@ -530,6 +530,7 @@ pub(super) fn run_chunk(
                 arrays::make_array_repeat(&mut frame.stack, *n, function_name, ip)?
             }
             Instr::ArrayGet => arrays::array_get(&mut frame.stack, function_name, ip)?,
+            Instr::ArrayGetLocal(slot) => arrays::array_get_local(frame, *slot, function_name, ip)?,
             Instr::ArraySet => arrays::array_set(&mut frame.stack, function_name, ip)?,
             Instr::ArraySetLocal(slot) => arrays::array_set_local(frame, *slot, function_name, ip)?,
             Instr::ArrayIncLocal(slot) => arrays::array_inc_local(frame, *slot, function_name, ip)?,
@@ -615,39 +616,28 @@ fn handle_hot_instr(
             frame.ip += 1;
             Ok(true)
         }
-        Instr::AddLocalToLocal { dst, src } => {
-            let Some(lhs) = frame.read_local_cloned(*dst) else {
-                return Err(invalid_local_slot(function_name, ip, *dst));
-            };
-            let Some(rhs) = frame.read_local_cloned(*src) else {
-                return Err(invalid_local_slot(function_name, ip, *src));
-            };
-            match (lhs, rhs) {
-                (Value::Int(lhs), Value::Int(rhs)) => {
-                    if !frame.write_local_fast(*dst, Value::Int(lhs + rhs)) {
-                        return Err(invalid_local_slot(function_name, ip, *dst));
-                    }
-                    frame.ip += 1;
-                    Ok(true)
-                }
-                _ => Ok(false),
+        Instr::AddLocalToLocal { dst, src } => match frame.add_int_local_to_local(*dst, *src) {
+            Some(Ok(())) => {
+                frame.ip += 1;
+                Ok(true)
             }
-        }
-        Instr::AddConstToLocal { slot, rhs } => {
-            let Some(value) = frame.read_local_cloned(*slot) else {
-                return Err(invalid_local_slot(function_name, ip, *slot));
-            };
-            match value {
-                Value::Int(lhs) => {
-                    if !frame.write_local_fast(*slot, Value::Int(lhs + rhs)) {
-                        return Err(invalid_local_slot(function_name, ip, *slot));
-                    }
-                    frame.ip += 1;
-                    Ok(true)
+            Some(Err(())) => Ok(false),
+            None => {
+                if *dst >= frame.locals.len() {
+                    Err(invalid_local_slot(function_name, ip, *dst))
+                } else {
+                    Err(invalid_local_slot(function_name, ip, *src))
                 }
-                _ => Ok(false),
             }
-        }
+        },
+        Instr::AddConstToLocal { slot, rhs } => match frame.add_const_to_int_local(*slot, *rhs) {
+            Some(Ok(())) => {
+                frame.ip += 1;
+                Ok(true)
+            }
+            Some(Err(())) => Ok(false),
+            None => Err(invalid_local_slot(function_name, ip, *slot)),
+        },
         Instr::StrLen => {
             let Some(value) = frame.stack.pop() else {
                 return Err(err_at(

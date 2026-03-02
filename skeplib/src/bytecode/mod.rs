@@ -123,6 +123,7 @@ pub enum Instr {
     MakeArray(usize),
     MakeArrayRepeat(usize),
     ArrayGet,
+    ArrayGetLocal(usize),
     ArraySet,
     ArraySetLocal(usize),
     ArrayIncLocal(usize),

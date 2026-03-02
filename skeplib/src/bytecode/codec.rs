@@ -321,6 +321,10 @@ fn encode_instr(i: &Instr, out: &mut Vec<u8>) {
             write_u32(out, *n as u32);
         }
         Instr::ArrayGet => write_u8(out, 28),
+        Instr::ArrayGetLocal(slot) => {
+            write_u8(out, 60);
+            write_u32(out, *slot as u32);
+        }
         Instr::ArraySet => write_u8(out, 29),
         Instr::ArraySetLocal(slot) => {
             write_u8(out, 45);
@@ -550,6 +554,7 @@ fn decode_instr(rd: &mut Reader<'_>) -> Result<Instr, String> {
         26 => Instr::MakeArray(rd.read_u32()? as usize),
         27 => Instr::MakeArrayRepeat(rd.read_u32()? as usize),
         28 => Instr::ArrayGet,
+        60 => Instr::ArrayGetLocal(rd.read_u32()? as usize),
         29 => Instr::ArraySet,
         45 => Instr::ArraySetLocal(rd.read_u32()? as usize),
         50 => Instr::ArrayIncLocal(rd.read_u32()? as usize),
