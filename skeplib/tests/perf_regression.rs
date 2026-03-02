@@ -19,7 +19,7 @@ fn assert_under(label: &str, dur: std::time::Duration, max_ms: u128) {
 #[test]
 #[ignore]
 fn perf_runtime_loop_accumulate_vm() {
-    let src = src_loop_accumulate(25_000);
+    let src = src_loop_accumulate(250_000);
     let module = compile_module(&src);
     let out = run_vm(&module);
     assert!(matches!(out, Value::Int(_)));
