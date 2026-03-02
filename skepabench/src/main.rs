@@ -12,31 +12,20 @@ use skeplib::resolver::resolve_project;
 use skeplib::sema::analyze_project_graph_phased;
 use skeplib::vm::Vm;
 
-const DEFAULT_WARMUPS: usize = 1;
-const DEFAULT_RUNS: usize = 3;
+const DEFAULT_WARMUPS: usize = 4;
+const DEFAULT_RUNS: usize = 15;
 
-const STRICT_WARMUPS: usize = 4;
-const STRICT_RUNS: usize = 15;
-
-const DEFAULT_LOOP_ITERATIONS: usize = 250_000;
-const DEFAULT_CALL_ITERATIONS: usize = 120_000;
-const DEFAULT_ARRAY_ITERATIONS: usize = 100_000;
-const DEFAULT_STRUCT_ITERATIONS: usize = 60_000;
-const DEFAULT_STRING_ITERATIONS: usize = 15_000;
-const DEFAULT_MEDIUM_ACCUMULATE_LIMIT: usize = 8_000;
-
-const STRICT_LOOP_ITERATIONS: usize = 4_000_000;
-const STRICT_CALL_ITERATIONS: usize = 2_000_000;
-const STRICT_ARRAY_ITERATIONS: usize = 1_600_000;
-const STRICT_STRUCT_ITERATIONS: usize = 1_000_000;
-const STRICT_STRING_ITERATIONS: usize = 400_000;
-const STRICT_MEDIUM_ACCUMULATE_LIMIT: usize = 80_000;
+const LOOP_ITERATIONS: usize = 4_000_000;
+const CALL_ITERATIONS: usize = 2_000_000;
+const ARRAY_ITERATIONS: usize = 1_600_000;
+const STRUCT_ITERATIONS: usize = 1_000_000;
+const STRING_ITERATIONS: usize = 400_000;
+const MEDIUM_ACCUMULATE_LIMIT: usize = 80_000;
 
 struct CliOptions {
     warmups: usize,
     runs: usize,
     profile: String,
-    strict: bool,
     filter: Option<String>,
     json: bool,
     save_baseline: bool,
@@ -123,11 +112,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    let mut opts = parse_args(env::args().skip(1))?;
-    if opts.strict && opts.warmups == DEFAULT_WARMUPS && opts.runs == DEFAULT_RUNS {
-        opts.warmups = STRICT_WARMUPS;
-        opts.runs = STRICT_RUNS;
-    }
+    let opts = parse_args(env::args().skip(1))?;
     let workloads = workload_config(&opts);
     let workspace =
         BenchWorkspace::create(workloads.medium_accumulate_limit).map_err(|err| err.to_string())?;
@@ -189,7 +174,6 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<CliOptions, Stri
     let mut warmups = DEFAULT_WARMUPS;
     let mut runs = DEFAULT_RUNS;
     let mut profile = String::from("debug");
-    let mut strict = false;
     let mut filter = None;
     let mut json = false;
     let mut save_baseline = false;
@@ -223,9 +207,6 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<CliOptions, Stri
                 }
                 profile = value;
             }
-            "--strict" => {
-                strict = true;
-            }
             "--filter" => {
                 let Some(value) = args.next() else {
                     return Err("Missing value for --filter".to_string());
@@ -249,7 +230,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<CliOptions, Stri
             }
             "--help" | "-h" => {
                 return Err(
-                    "Usage: cargo run -p skepabench -- [--warmups N] [--runs N] [--profile debug|release] [--strict] [--filter SUBSTR] [--json] [--save-baseline] [--compare] [--baseline-path PATH]"
+                    "Usage: cargo run -p skepabench -- [--warmups N] [--runs N] [--profile debug|release] [--filter SUBSTR] [--json] [--save-baseline] [--compare] [--baseline-path PATH]"
                         .to_string(),
                 );
             }
@@ -265,7 +246,6 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<CliOptions, Stri
         warmups,
         runs,
         profile,
-        strict,
         filter,
         json,
         save_baseline,
@@ -545,8 +525,8 @@ fn duration_ms(duration: Duration) -> f64 {
 
 fn print_table_report(opts: &CliOptions, results: &[BenchRecord]) {
     println!(
-        "skepabench warmups={} runs={} profile={} strict={}",
-        opts.warmups, opts.runs, opts.profile, opts.strict
+        "skepabench warmups={} runs={} profile={}",
+        opts.warmups, opts.runs, opts.profile
     );
     println!(
         "{:<28} {:<8} {:>10} {:>10} {:>10}",
@@ -597,11 +577,7 @@ fn baseline_report_from_results(opts: &CliOptions, results: &[BenchRecord]) -> B
     BaselineReport {
         warmups: opts.warmups,
         runs: opts.runs,
-        profile: if opts.strict {
-            format!("{}+strict", opts.profile)
-        } else {
-            opts.profile.clone()
-        },
+        profile: opts.profile.clone(),
         results: results
             .iter()
             .map(|result| match &result.outcome {
@@ -635,24 +611,14 @@ fn default_baseline_path(profile: &str) -> PathBuf {
 }
 
 fn workload_config(opts: &CliOptions) -> WorkloadConfig {
-    if opts.strict {
-        WorkloadConfig {
-            loop_iterations: STRICT_LOOP_ITERATIONS,
-            call_iterations: STRICT_CALL_ITERATIONS,
-            array_iterations: STRICT_ARRAY_ITERATIONS,
-            struct_iterations: STRICT_STRUCT_ITERATIONS,
-            string_iterations: STRICT_STRING_ITERATIONS,
-            medium_accumulate_limit: STRICT_MEDIUM_ACCUMULATE_LIMIT,
-        }
-    } else {
-        WorkloadConfig {
-            loop_iterations: DEFAULT_LOOP_ITERATIONS,
-            call_iterations: DEFAULT_CALL_ITERATIONS,
-            array_iterations: DEFAULT_ARRAY_ITERATIONS,
-            struct_iterations: DEFAULT_STRUCT_ITERATIONS,
-            string_iterations: DEFAULT_STRING_ITERATIONS,
-            medium_accumulate_limit: DEFAULT_MEDIUM_ACCUMULATE_LIMIT,
-        }
+    let _ = opts;
+    WorkloadConfig {
+        loop_iterations: LOOP_ITERATIONS,
+        call_iterations: CALL_ITERATIONS,
+        array_iterations: ARRAY_ITERATIONS,
+        struct_iterations: STRUCT_ITERATIONS,
+        string_iterations: STRING_ITERATIONS,
+        medium_accumulate_limit: MEDIUM_ACCUMULATE_LIMIT,
     }
 }
 
