@@ -17,6 +17,9 @@ const DEFAULT_RUNS: usize = 15;
 
 const LOOP_ITERATIONS: usize = 4_000_000;
 const ARITH_ITERATIONS: usize = 4_000_000;
+const ARITH_LOCAL_CONST_ITERATIONS: usize = 6_000_000;
+const ARITH_LOCAL_LOCAL_ITERATIONS: usize = 5_000_000;
+const ARITH_CHAIN_ITERATIONS: usize = 3_000_000;
 const CALL_ITERATIONS: usize = 2_000_000;
 const ARRAY_ITERATIONS: usize = 1_600_000;
 const STRUCT_ITERATIONS: usize = 1_000_000;
@@ -37,6 +40,9 @@ struct CliOptions {
 struct WorkloadConfig {
     loop_iterations: usize,
     arith_iterations: usize,
+    arith_local_const_iterations: usize,
+    arith_local_local_iterations: usize,
+    arith_chain_iterations: usize,
     call_iterations: usize,
     array_iterations: usize,
     struct_iterations: usize,
@@ -273,6 +279,17 @@ fn benchmark_cases(
         compile_source(&src_loop_accumulate(workloads.loop_iterations)).map_err(format_diags)?;
     let arith_module =
         compile_source(&src_arith_workload(workloads.arith_iterations)).map_err(format_diags)?;
+    let arith_local_const_module = compile_source(&src_arith_local_const_workload(
+        workloads.arith_local_const_iterations,
+    ))
+    .map_err(format_diags)?;
+    let arith_local_local_module = compile_source(&src_arith_local_local_workload(
+        workloads.arith_local_local_iterations,
+    ))
+    .map_err(format_diags)?;
+    let arith_chain_module =
+        compile_source(&src_arith_chain_workload(workloads.arith_chain_iterations))
+            .map_err(format_diags)?;
     let call_module = compile_source(&src_function_call_chain(workloads.call_iterations))
         .map_err(format_diags)?;
     let array_module =
@@ -370,6 +387,21 @@ fn benchmark_cases(
             name: "runtime_arith_heavy",
             kind: CaseKind::Library,
             runner: Box::new(move || run_module(&arith_module)),
+        },
+        BenchCase {
+            name: "runtime_arith_local_const",
+            kind: CaseKind::Library,
+            runner: Box::new(move || run_module(&arith_local_const_module)),
+        },
+        BenchCase {
+            name: "runtime_arith_local_local",
+            kind: CaseKind::Library,
+            runner: Box::new(move || run_module(&arith_local_local_module)),
+        },
+        BenchCase {
+            name: "runtime_arith_chain",
+            kind: CaseKind::Library,
+            runner: Box::new(move || run_module(&arith_chain_module)),
         },
         BenchCase {
             name: "runtime_call_heavy",
@@ -624,6 +656,9 @@ fn workload_config(opts: &CliOptions) -> WorkloadConfig {
     WorkloadConfig {
         loop_iterations: LOOP_ITERATIONS,
         arith_iterations: ARITH_ITERATIONS,
+        arith_local_const_iterations: ARITH_LOCAL_CONST_ITERATIONS,
+        arith_local_local_iterations: ARITH_LOCAL_LOCAL_ITERATIONS,
+        arith_chain_iterations: ARITH_CHAIN_ITERATIONS,
         call_iterations: CALL_ITERATIONS,
         array_iterations: ARRAY_ITERATIONS,
         struct_iterations: STRUCT_ITERATIONS,
@@ -1132,6 +1167,68 @@ fn main() -> Int {{
     acc = acc + ((i * 3) % 97);
     acc = acc - (i % 11);
     acc = acc + ((acc / 3) % 29);
+    i = i + 1;
+  }}
+  return acc;
+}}
+"#
+    )
+}
+
+fn src_arith_local_const_workload(iterations: usize) -> String {
+    format!(
+        r#"
+fn main() -> Int {{
+  let i = 1;
+  let acc = 17;
+  while (i < {iterations}) {{
+    let a = acc - 11;
+    let b = a * 3;
+    let c = b / 2;
+    acc = c % 97;
+    i = i + 1;
+  }}
+  return acc;
+}}
+"#
+    )
+}
+
+fn src_arith_local_local_workload(iterations: usize) -> String {
+    format!(
+        r#"
+fn main() -> Int {{
+  let i = 1;
+  let a = 17;
+  let b = 31;
+  let acc = 0;
+  while (i < {iterations}) {{
+    acc = acc + ((a * b) % 97);
+    acc = acc - (a / b);
+    a = a + 3;
+    b = b + 5;
+    i = i + 1;
+  }}
+  return acc;
+}}
+"#
+    )
+}
+
+fn src_arith_chain_workload(iterations: usize) -> String {
+    format!(
+        r#"
+fn main() -> Int {{
+  let i = 1;
+  let x = 19;
+  let y = 23;
+  let z = 29;
+  let acc = 0;
+  while (i < {iterations}) {{
+    acc = acc + (((x * 3) + (y * 5) - (z % 7)) / 3);
+    x = x + 1;
+    y = y + 2;
+    z = z + 3;
     i = i + 1;
   }}
   return acc;
