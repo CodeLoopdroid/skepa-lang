@@ -42,6 +42,16 @@ fn fmt_instr(i: &Instr) -> String {
         Instr::StoreLocal(s) => format!("StoreLocal {s}"),
         Instr::AddLocalToLocal { dst, src } => format!("AddLocalToLocal dst={dst} src={src}"),
         Instr::AddConstToLocal { slot, rhs } => format!("AddConstToLocal slot={slot} rhs={rhs}"),
+        Instr::IntLocalLocalOp { lhs, rhs, op } => {
+            let op_name = match op {
+                IntLocalConstOp::Add => "Add",
+                IntLocalConstOp::Sub => "Sub",
+                IntLocalConstOp::Mul => "Mul",
+                IntLocalConstOp::Div => "Div",
+                IntLocalConstOp::Mod => "Mod",
+            };
+            format!("IntLocalLocalOp lhs={lhs} rhs={rhs} op={op_name}")
+        }
         Instr::IntLocalConstOp { slot, op, rhs } => {
             let op_name = match op {
                 IntLocalConstOp::Add => "Add",

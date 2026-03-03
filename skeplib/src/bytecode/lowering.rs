@@ -265,11 +265,7 @@ impl Compiler {
         let mut code = Vec::new();
 
         for param in params {
-            if let TypeName::Named(type_name) = &param.ty {
-                ctx.alloc_local_with_named_type(param.name.clone(), type_name.clone());
-            } else {
-                ctx.alloc_local(param.name.clone());
-            }
+            ctx.alloc_local_with_type(param.name.clone(), &param.ty);
         }
 
         for stmt in body {
@@ -296,14 +292,13 @@ impl Compiler {
         let mut code = Vec::new();
 
         for param in &func.params {
-            if let TypeName::Named(type_name) = &param.ty {
-                ctx.alloc_local_with_named_type(
-                    param.name.clone(),
-                    self.resolve_struct_runtime_name(type_name),
-                );
-            } else {
-                ctx.alloc_local(param.name.clone());
-            }
+            let ty = match &param.ty {
+                TypeName::Named(type_name) => {
+                    TypeName::Named(self.resolve_struct_runtime_name(type_name))
+                }
+                other => other.clone(),
+            };
+            ctx.alloc_local_with_type(param.name.clone(), &ty);
         }
 
         for stmt in &func.body {
@@ -329,14 +324,13 @@ impl Compiler {
         let mut code = Vec::new();
 
         for param in &method.params {
-            if let TypeName::Named(type_name) = &param.ty {
-                ctx.alloc_local_with_named_type(
-                    param.name.clone(),
-                    self.resolve_struct_runtime_name(type_name),
-                );
-            } else {
-                ctx.alloc_local(param.name.clone());
-            }
+            let ty = match &param.ty {
+                TypeName::Named(type_name) => {
+                    TypeName::Named(self.resolve_struct_runtime_name(type_name))
+                }
+                other => other.clone(),
+            };
+            ctx.alloc_local_with_type(param.name.clone(), &ty);
         }
 
         for stmt in &method.body {
@@ -372,9 +366,20 @@ impl Compiler {
                     }
                     _ => None,
                 };
+                let explicit_primitive = match ty {
+                    Some(TypeName::Int) => Some(PrimitiveType::Int),
+                    Some(TypeName::Float) => Some(PrimitiveType::Float),
+                    Some(TypeName::Bool) => Some(PrimitiveType::Bool),
+                    Some(TypeName::String) => Some(PrimitiveType::String),
+                    Some(TypeName::Void) => Some(PrimitiveType::Void),
+                    _ => None,
+                };
                 let inferred_named = Self::infer_expr_named_type(value, ctx);
+                let inferred_primitive = Self::infer_expr_primitive_type(value, ctx);
                 let slot = if let Some(type_name) = explicit_named.or(inferred_named) {
                     ctx.alloc_local_with_named_type(name.clone(), type_name)
+                } else if let Some(ty) = explicit_primitive.or(inferred_primitive) {
+                    ctx.alloc_local_with_primitive_type(name.clone(), ty)
                 } else {
                     ctx.alloc_local(name.clone())
                 };
@@ -735,6 +740,10 @@ impl Compiler {
                 }
                 _ => {
                     if let Some(instr) = Self::specialized_local_const_expr(op, left, right, ctx) {
+                        code.push(instr);
+                    } else if let Some(instr) =
+                        Self::specialized_local_local_expr(op, left, right, ctx)
+                    {
                         code.push(instr);
                     } else {
                         self.compile_expr(left, ctx, code);
@@ -1245,6 +1254,9 @@ impl Compiler {
         let Expr::IntLit(rhs) = right else {
             return None;
         };
+        if ctx.primitive_type(name) != Some(PrimitiveType::Int) {
+            return None;
+        }
         let slot = ctx.lookup(name)?;
         let op = match op {
             BinaryOp::Sub => IntLocalConstOp::Sub,
@@ -1258,6 +1270,36 @@ impl Compiler {
             op,
             rhs: *rhs,
         })
+    }
+
+    fn specialized_local_local_expr(
+        op: &BinaryOp,
+        left: &Expr,
+        right: &Expr,
+        ctx: &FnCtx,
+    ) -> Option<Instr> {
+        let Expr::Ident(left_name) = left else {
+            return None;
+        };
+        let Expr::Ident(right_name) = right else {
+            return None;
+        };
+        if ctx.primitive_type(left_name) != Some(PrimitiveType::Int)
+            || ctx.primitive_type(right_name) != Some(PrimitiveType::Int)
+        {
+            return None;
+        }
+        let lhs = ctx.lookup(left_name)?;
+        let rhs = ctx.lookup(right_name)?;
+        let op = match op {
+            BinaryOp::Add => IntLocalConstOp::Add,
+            BinaryOp::Sub => IntLocalConstOp::Sub,
+            BinaryOp::Mul => IntLocalConstOp::Mul,
+            BinaryOp::Div => IntLocalConstOp::Div,
+            BinaryOp::Mod => IntLocalConstOp::Mod,
+            _ => return None,
+        };
+        Some(Instr::IntLocalLocalOp { lhs, rhs, op })
     }
 
     fn flatten_field_target(target: &AssignTarget) -> Option<(String, Vec<String>)> {
@@ -1285,6 +1327,50 @@ impl Compiler {
         match expr {
             Expr::Ident(name) => ctx.named_type(name),
             Expr::StructLit { name, .. } => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    fn infer_expr_primitive_type(expr: &Expr, ctx: &FnCtx) -> Option<PrimitiveType> {
+        match expr {
+            Expr::IntLit(_) => Some(PrimitiveType::Int),
+            Expr::FloatLit(_) => Some(PrimitiveType::Float),
+            Expr::BoolLit(_) => Some(PrimitiveType::Bool),
+            Expr::StringLit(_) => Some(PrimitiveType::String),
+            Expr::Ident(name) => ctx.primitive_type(name),
+            Expr::Group(inner) => Self::infer_expr_primitive_type(inner, ctx),
+            Expr::Unary { op, expr } => match (op, Self::infer_expr_primitive_type(expr, ctx)) {
+                (UnaryOp::Neg | UnaryOp::Pos, Some(PrimitiveType::Int)) => Some(PrimitiveType::Int),
+                (UnaryOp::Not, Some(PrimitiveType::Bool)) => Some(PrimitiveType::Bool),
+                _ => None,
+            },
+            Expr::Binary { left, op, right } => {
+                let left_ty = Self::infer_expr_primitive_type(left, ctx);
+                let right_ty = Self::infer_expr_primitive_type(right, ctx);
+                match op {
+                    BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::Mod => {
+                        if left_ty == Some(PrimitiveType::Int)
+                            && right_ty == Some(PrimitiveType::Int)
+                        {
+                            Some(PrimitiveType::Int)
+                        } else {
+                            None
+                        }
+                    }
+                    BinaryOp::EqEq
+                    | BinaryOp::Neq
+                    | BinaryOp::Lt
+                    | BinaryOp::Lte
+                    | BinaryOp::Gt
+                    | BinaryOp::Gte
+                    | BinaryOp::AndAnd
+                    | BinaryOp::OrOr => Some(PrimitiveType::Bool),
+                }
+            }
             _ => None,
         }
     }
@@ -1605,7 +1691,17 @@ struct LoopCtx {
 struct FnCtx {
     locals: HashMap<String, usize>,
     local_named_types: HashMap<String, String>,
+    local_primitive_types: HashMap<String, PrimitiveType>,
     next_local: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PrimitiveType {
+    Int,
+    Float,
+    Bool,
+    String,
+    Void,
 }
 
 enum SpecializedArrayAssign {
@@ -1628,6 +1724,26 @@ impl FnCtx {
         slot
     }
 
+    fn alloc_local_with_type(&mut self, name: String, ty: &TypeName) -> usize {
+        match ty {
+            TypeName::Named(type_name) => self.alloc_local_with_named_type(name, type_name.clone()),
+            TypeName::Int => self.alloc_local_with_primitive_type(name, PrimitiveType::Int),
+            TypeName::Float => self.alloc_local_with_primitive_type(name, PrimitiveType::Float),
+            TypeName::Bool => self.alloc_local_with_primitive_type(name, PrimitiveType::Bool),
+            TypeName::String => self.alloc_local_with_primitive_type(name, PrimitiveType::String),
+            TypeName::Void => self.alloc_local_with_primitive_type(name, PrimitiveType::Void),
+            TypeName::Array { .. } | TypeName::Vec { .. } | TypeName::Fn { .. } => {
+                self.alloc_local(name)
+            }
+        }
+    }
+
+    fn alloc_local_with_primitive_type(&mut self, name: String, ty: PrimitiveType) -> usize {
+        let slot = self.alloc_local(name.clone());
+        self.local_primitive_types.insert(name, ty);
+        slot
+    }
+
     fn alloc_local_with_named_type(&mut self, name: String, type_name: String) -> usize {
         let slot = self.alloc_local(name.clone());
         self.local_named_types.insert(name, type_name);
@@ -1646,6 +1762,10 @@ impl FnCtx {
 
     fn named_type(&self, name: &str) -> Option<String> {
         self.local_named_types.get(name).cloned()
+    }
+
+    fn primitive_type(&self, name: &str) -> Option<PrimitiveType> {
+        self.local_primitive_types.get(name).copied()
     }
 }
 
