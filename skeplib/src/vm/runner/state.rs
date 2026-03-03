@@ -147,6 +147,46 @@ impl<'a> CallFrame<'a> {
     }
 
     #[inline(always)]
+    pub(super) fn apply_stack_int_to_local(
+        &mut self,
+        slot: usize,
+        op: crate::bytecode::IntLocalConstOp,
+    ) -> Option<Result<(), crate::vm::VmErrorKind>> {
+        if slot >= self.locals.len() {
+            return None;
+        }
+        let Some(rhs) = self.stack.pop() else {
+            return Some(Err(crate::vm::VmErrorKind::StackUnderflow));
+        };
+        match (unsafe { self.locals.get_unchecked_mut(slot) }, rhs) {
+            (Value::Int(lhs), Value::Int(rhs)) => {
+                match op {
+                    crate::bytecode::IntLocalConstOp::Add => *lhs += rhs,
+                    crate::bytecode::IntLocalConstOp::Sub => *lhs -= rhs,
+                    crate::bytecode::IntLocalConstOp::Mul => *lhs *= rhs,
+                    crate::bytecode::IntLocalConstOp::Div => {
+                        if rhs == 0 {
+                            return Some(Err(crate::vm::VmErrorKind::DivisionByZero));
+                        }
+                        *lhs /= rhs;
+                    }
+                    crate::bytecode::IntLocalConstOp::Mod => {
+                        if rhs == 0 {
+                            return Some(Err(crate::vm::VmErrorKind::DivisionByZero));
+                        }
+                        *lhs %= rhs;
+                    }
+                }
+                Some(Ok(()))
+            }
+            (_, rhs) => {
+                self.stack.push(rhs);
+                Some(Err(crate::vm::VmErrorKind::TypeMismatch))
+            }
+        }
+    }
+
+    #[inline(always)]
     pub(super) fn pop2(&mut self) -> Option<(Value, Value)> {
         let rhs = self.stack.pop()?;
         let lhs = self.stack.pop()?;

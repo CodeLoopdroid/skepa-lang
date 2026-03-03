@@ -219,6 +219,20 @@ fn encode_instr(i: &Instr, out: &mut Vec<u8>) {
             );
             write_i64(out, *rhs);
         }
+        Instr::IntStackOpToLocal { slot, op } => {
+            write_u8(out, 63);
+            write_u32(out, *slot as u32);
+            write_u8(
+                out,
+                match op {
+                    IntLocalConstOp::Add => 0,
+                    IntLocalConstOp::Sub => 1,
+                    IntLocalConstOp::Mul => 2,
+                    IntLocalConstOp::Div => 3,
+                    IntLocalConstOp::Mod => 4,
+                },
+            );
+        }
         Instr::LoadGlobal(s) => {
             write_u8(out, 3);
             write_u32(out, *s as u32);
@@ -527,6 +541,17 @@ fn decode_instr(rd: &mut Reader<'_>) -> Result<Instr, String> {
                 other => return Err(format!("Unknown IntLocalConstOp tag {other}")),
             },
             rhs: rd.read_i64()?,
+        },
+        63 => Instr::IntStackOpToLocal {
+            slot: rd.read_u32()? as usize,
+            op: match rd.read_u8()? {
+                0 => IntLocalConstOp::Add,
+                1 => IntLocalConstOp::Sub,
+                2 => IntLocalConstOp::Mul,
+                3 => IntLocalConstOp::Div,
+                4 => IntLocalConstOp::Mod,
+                other => return Err(format!("Unknown IntStackOpToLocal tag {other}")),
+            },
         },
         3 => Instr::LoadGlobal(rd.read_u32()? as usize),
         4 => Instr::StoreGlobal(rd.read_u32()? as usize),

@@ -388,7 +388,13 @@ impl Compiler {
             Stmt::Assign { target, value } => match target {
                 AssignTarget::Ident(name) => {
                     if let Some(slot) = ctx.lookup(name) {
-                        if let Some(instr) = Self::specialized_local_assign(value, ctx, slot) {
+                        if let Some((rhs, instr)) =
+                            Self::specialized_local_stack_assign(value, ctx, name, slot)
+                        {
+                            self.compile_expr(rhs, ctx, code);
+                            code.push(instr);
+                        } else if let Some(instr) = Self::specialized_local_assign(value, ctx, slot)
+                        {
                             code.push(instr);
                         } else {
                             self.compile_expr(value, ctx, code);
@@ -1124,6 +1130,32 @@ impl Compiler {
             }
             _ => None,
         }
+    }
+
+    fn specialized_local_stack_assign<'a>(
+        value: &'a Expr,
+        ctx: &FnCtx,
+        dst_name: &str,
+        dst: usize,
+    ) -> Option<(&'a Expr, Instr)> {
+        let Expr::Binary { left, op, right } = value else {
+            return None;
+        };
+        let Expr::Ident(name) = &**left else {
+            return None;
+        };
+        if name != dst_name || ctx.primitive_type(name) != Some(PrimitiveType::Int) {
+            return None;
+        }
+        let op = match op {
+            BinaryOp::Add => IntLocalConstOp::Add,
+            BinaryOp::Sub => IntLocalConstOp::Sub,
+            BinaryOp::Mul => IntLocalConstOp::Mul,
+            BinaryOp::Div => IntLocalConstOp::Div,
+            BinaryOp::Mod => IntLocalConstOp::Mod,
+            _ => return None,
+        };
+        Some((right, Instr::IntStackOpToLocal { slot: dst, op }))
     }
 
     fn specialized_local_array_assign(

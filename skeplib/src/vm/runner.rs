@@ -116,7 +116,8 @@ pub(super) fn run_chunk(
             | Instr::StoreLocal(_)
             | Instr::AddLocalToLocal { .. }
             | Instr::AddConstToLocal { .. }
-            | Instr::IntLocalConstOp { .. } => unreachable!(),
+            | Instr::IntLocalConstOp { .. }
+            | Instr::IntStackOpToLocal { .. } => unreachable!(),
             Instr::LoadGlobal(slot) => {
                 let Some(v) = env.globals.get(*slot).cloned() else {
                     return Err(err_at(
@@ -788,6 +789,31 @@ fn handle_hot_instr(
                 _ => Ok(false),
             }
         }
+        Instr::IntStackOpToLocal { slot, op } => match frame.apply_stack_int_to_local(*slot, *op) {
+            Some(Ok(())) => {
+                frame.ip += 1;
+                Ok(true)
+            }
+            Some(Err(VmErrorKind::StackUnderflow)) => Err(err_at(
+                VmErrorKind::StackUnderflow,
+                "Stack underflow on IntStackOpToLocal",
+                function_name,
+                ip,
+            )),
+            Some(Err(VmErrorKind::DivisionByZero)) => Err(err_at(
+                VmErrorKind::DivisionByZero,
+                match op {
+                    IntLocalConstOp::Div => "division by zero",
+                    IntLocalConstOp::Mod => "modulo by zero",
+                    _ => "division by zero",
+                },
+                function_name,
+                ip,
+            )),
+            Some(Err(VmErrorKind::TypeMismatch)) => Ok(false),
+            Some(Err(_)) => Ok(false),
+            None => Err(invalid_local_slot(function_name, ip, *slot)),
+        },
         Instr::StrLen => {
             let Some(value) = frame.stack.pop() else {
                 return Err(err_at(
