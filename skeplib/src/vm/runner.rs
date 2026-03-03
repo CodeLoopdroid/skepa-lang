@@ -615,6 +615,14 @@ pub(super) fn run_chunk(
             Instr::StructGet(field) => {
                 structs::struct_get(&mut frame.stack, field, function_name, ip)?
             }
+            Instr::StructGetLocalSlot { slot, field_slot } => structs::struct_get_local_slot(
+                &frame.locals,
+                &mut frame.stack,
+                *slot,
+                *field_slot,
+                function_name,
+                ip,
+            )?,
             Instr::StructGetSlot(slot) => {
                 structs::struct_get_slot(&mut frame.stack, *slot, function_name, ip)?
             }

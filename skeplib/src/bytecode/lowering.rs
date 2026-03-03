@@ -923,16 +923,31 @@ impl Compiler {
             }
             Expr::Field { .. } => {
                 if let Some((base, fields)) = Self::flatten_field_expr(expr) {
-                    self.compile_expr(base, ctx, code);
-                    if let Some(base_ty) = Self::infer_expr_named_type(base, ctx)
+                    if let Expr::Ident(name) = base
+                        && let Some(local_slot) = ctx.lookup(name)
+                        && let Some(base_ty) = Self::infer_expr_named_type(base, ctx)
                         && let Some(slots) = self.resolve_field_slots(&base_ty, &fields)
+                        && let Some((first, rest)) = slots.split_first()
                     {
-                        for slot in slots {
-                            code.push(Instr::StructGetSlot(slot));
+                        code.push(Instr::StructGetLocalSlot {
+                            slot: local_slot,
+                            field_slot: *first,
+                        });
+                        for slot in rest {
+                            code.push(Instr::StructGetSlot(*slot));
                         }
                     } else {
-                        for field in fields {
-                            code.push(Instr::StructGet(field));
+                        self.compile_expr(base, ctx, code);
+                        if let Some(base_ty) = Self::infer_expr_named_type(base, ctx)
+                            && let Some(slots) = self.resolve_field_slots(&base_ty, &fields)
+                        {
+                            for slot in slots {
+                                code.push(Instr::StructGetSlot(slot));
+                            }
+                        } else {
+                            for field in fields {
+                                code.push(Instr::StructGet(field));
+                            }
                         }
                     }
                 } else {
@@ -1883,6 +1898,17 @@ fn trivial_direct_call_pattern(chunk: &FunctionChunk) -> Option<TrivialDirectCal
         [
             Instr::LoadLocal(0),
             Instr::StructGetSlot(field_slot),
+            Instr::LoadLocal(1),
+            Instr::Add,
+            Instr::Return,
+        ] if chunk.param_count == 2 && chunk.locals_count == 2 => {
+            Some(TrivialDirectCall::StructFieldAdd(*field_slot))
+        }
+        [
+            Instr::StructGetLocalSlot {
+                slot: 0,
+                field_slot,
+            },
             Instr::LoadLocal(1),
             Instr::Add,
             Instr::Return,

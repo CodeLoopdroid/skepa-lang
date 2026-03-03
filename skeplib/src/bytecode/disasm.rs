@@ -137,6 +137,9 @@ fn fmt_instr(i: &Instr) -> String {
         }
         Instr::MakeStructId { id } => format!("MakeStructId {id}"),
         Instr::StructGet(field) => format!("StructGet {field}"),
+        Instr::StructGetLocalSlot { slot, field_slot } => {
+            format!("StructGetLocalSlot slot={slot} field_slot={field_slot}")
+        }
         Instr::StructGetSlot(slot) => format!("StructGetSlot {slot}"),
         Instr::StructSetPath(path) => format!("StructSetPath {}", path.join(".")),
         Instr::StructSetPathSlots(path) => format!(

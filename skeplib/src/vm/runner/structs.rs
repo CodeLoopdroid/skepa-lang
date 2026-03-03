@@ -162,6 +162,45 @@ pub(super) fn struct_get_slot(
     Ok(())
 }
 
+pub(super) fn struct_get_local_slot(
+    locals: &[Value],
+    stack: &mut Vec<Value>,
+    local_slot: usize,
+    field_slot: usize,
+    function_name: &str,
+    ip: usize,
+) -> Result<(), VmError> {
+    let Some(base) = locals.get(local_slot) else {
+        return Err(super::err_at(
+            VmErrorKind::InvalidLocal,
+            format!("Invalid local slot {local_slot}"),
+            function_name,
+            ip,
+        ));
+    };
+    let Value::Struct { shape, fields } = base else {
+        return Err(super::err_at(
+            VmErrorKind::TypeMismatch,
+            "StructGetLocalSlot expects Struct local",
+            function_name,
+            ip,
+        ));
+    };
+    let Some(value) = fields.get(field_slot) else {
+        return Err(super::err_at(
+            VmErrorKind::TypeMismatch,
+            format!(
+                "Unknown struct field slot `{field_slot}` on `{}`",
+                shape.name
+            ),
+            function_name,
+            ip,
+        ));
+    };
+    stack.push(value.clone());
+    Ok(())
+}
+
 pub(super) fn struct_set_path(
     stack: &mut Vec<Value>,
     path: &[String],
