@@ -155,11 +155,15 @@ impl<'a> CallFrame<'a> {
         if slot >= self.locals.len() {
             return None;
         }
-        let Some(rhs) = self.stack.pop() else {
+        let Some(rhs) = self.stack.last() else {
             return Some(Err(crate::vm::VmErrorKind::StackUnderflow));
         };
-        match (unsafe { self.locals.get_unchecked_mut(slot) }, rhs) {
-            (Value::Int(lhs), Value::Int(rhs)) => {
+        let rhs = match rhs {
+            Value::Int(rhs) => *rhs,
+            _ => return Some(Err(crate::vm::VmErrorKind::TypeMismatch)),
+        };
+        match unsafe { self.locals.get_unchecked_mut(slot) } {
+            Value::Int(lhs) => {
                 match op {
                     crate::bytecode::IntLocalConstOp::Add => *lhs += rhs,
                     crate::bytecode::IntLocalConstOp::Sub => *lhs -= rhs,
@@ -177,12 +181,10 @@ impl<'a> CallFrame<'a> {
                         *lhs %= rhs;
                     }
                 }
+                self.stack.pop();
                 Some(Ok(()))
             }
-            (_, rhs) => {
-                self.stack.push(rhs);
-                Some(Err(crate::vm::VmErrorKind::TypeMismatch))
-            }
+            _ => Some(Err(crate::vm::VmErrorKind::TypeMismatch)),
         }
     }
 
