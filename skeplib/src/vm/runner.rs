@@ -851,7 +851,7 @@ fn handle_hot_instr(
             None => Err(invalid_local_slot(function_name, ip, *slot)),
         },
         Instr::IntStackConstOp { op, rhs } => {
-            let Some(value) = frame.stack.pop() else {
+            let Some(value) = frame.stack.last_mut() else {
                 return Err(err_at(
                     VmErrorKind::StackUnderflow,
                     "Stack underflow on IntStackConstOp",
@@ -861,10 +861,10 @@ fn handle_hot_instr(
             };
             match value {
                 Value::Int(lhs) => {
-                    let result = match op {
-                        IntLocalConstOp::Add => Value::Int(lhs + *rhs),
-                        IntLocalConstOp::Sub => Value::Int(lhs - *rhs),
-                        IntLocalConstOp::Mul => Value::Int(lhs * *rhs),
+                    match op {
+                        IntLocalConstOp::Add => *lhs += *rhs,
+                        IntLocalConstOp::Sub => *lhs -= *rhs,
+                        IntLocalConstOp::Mul => *lhs *= *rhs,
                         IntLocalConstOp::Div => {
                             if *rhs == 0 {
                                 return Err(err_at(
@@ -874,7 +874,7 @@ fn handle_hot_instr(
                                     ip,
                                 ));
                             }
-                            Value::Int(lhs / *rhs)
+                            *lhs /= *rhs;
                         }
                         IntLocalConstOp::Mod => {
                             if *rhs == 0 {
@@ -885,17 +885,13 @@ fn handle_hot_instr(
                                     ip,
                                 ));
                             }
-                            Value::Int(lhs % *rhs)
+                            *lhs %= *rhs;
                         }
-                    };
-                    frame.stack.push(result);
+                    }
                     frame.ip += 1;
                     Ok(true)
                 }
-                other => {
-                    frame.stack.push(other);
-                    Ok(false)
-                }
+                _ => Ok(false),
             }
         }
         Instr::IntLocalLocalOpToLocal { lhs, rhs, dst, op } => {
