@@ -1089,21 +1089,32 @@ fn handle_hot_instr(
             Ok(true)
         }
         Instr::Add => {
-            let Some((l, r)) = frame.pop2() else {
+            let Some(r) = frame.stack.pop() else {
                 return Err(err_at(
                     VmErrorKind::StackUnderflow,
-                    "Add expects lhs/rhs",
+                    "Add expects rhs",
                     function_name,
                     ip,
                 ));
             };
-            let stack = &mut frame.stack;
-            match (l, r) {
-                (Value::Int(a), Value::Int(b)) => stack.push(Value::Int(a + b)),
-                (l, r) => {
-                    stack.push(l);
-                    stack.push(r);
-                    arith::add(stack, function_name, ip)?;
+            let Some(l) = frame.stack.last_mut() else {
+                frame.stack.push(r);
+                return Err(err_at(
+                    VmErrorKind::StackUnderflow,
+                    "Add expects lhs",
+                    function_name,
+                    ip,
+                ));
+            };
+            match (&mut *l, r) {
+                (Value::Int(a), Value::Int(b)) => {
+                    *a += b;
+                }
+                (_, r) => {
+                    let l = std::mem::replace(l, Value::Unit);
+                    frame.stack.push(l);
+                    frame.stack.push(r);
+                    arith::add(&mut frame.stack, function_name, ip)?;
                 }
             }
             frame.ip += 1;
