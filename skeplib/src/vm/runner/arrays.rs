@@ -274,7 +274,7 @@ pub(super) fn array_inc_local(
     function_name: &str,
     ip: usize,
 ) -> Result<(), VmError> {
-    let Some(idx_v) = frame.stack.pop() else {
+    let Some(idx_v) = frame.stack.last() else {
         return Err(super::err_at(
             VmErrorKind::StackUnderflow,
             "ArrayIncLocal expects index",
@@ -290,6 +290,7 @@ pub(super) fn array_inc_local(
             ip,
         ));
     };
+    let idx = *idx;
     let Some(local) = frame.locals.get_mut(slot) else {
         return Err(super::err_at(
             VmErrorKind::InvalidLocal,
@@ -330,6 +331,7 @@ pub(super) fn array_inc_local(
     match value {
         Value::Int(current) => {
             *current += 1;
+            frame.stack.pop();
             Ok(())
         }
         _ => Err(super::err_at(
