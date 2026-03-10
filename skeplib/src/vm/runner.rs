@@ -4,7 +4,9 @@ mod arith;
 mod arrays;
 mod calls;
 mod control_flow;
+mod frame;
 mod state;
+mod strings;
 mod structs;
 
 use crate::bytecode::{BytecodeModule, FunctionChunk, Instr, IntLocalConstOp, Value};
@@ -319,7 +321,7 @@ pub(super) fn run_chunk(
                 }
                 let new_frame = {
                     frame.ip += 1;
-                    push_call_frame(
+                    frame::push_call_frame(
                         frame,
                         callee_chunk,
                         *argc,
@@ -332,9 +334,9 @@ pub(super) fn run_chunk(
                 continue;
             }
             Instr::CallIdx { idx, argc } => {
-                let new_frame = call_idx_fast(
+                let new_frame = frame::call_idx_fast(
                     frame,
-                    IndexedCallCtx {
+                    frame::IndexedCallCtx {
                         fn_table: env.fn_table,
                         idx: *idx,
                         argc: *argc,
@@ -449,7 +451,7 @@ pub(super) fn run_chunk(
                 }
                 let new_frame = {
                     frame.ip += 1;
-                    push_call_frame(
+                    frame::push_call_frame(
                         frame,
                         callee_chunk,
                         *argc,
@@ -501,7 +503,7 @@ pub(super) fn run_chunk(
                 }
                 let new_frame = {
                     frame.ip += 1;
-                    push_call_frame(
+                    frame::push_call_frame(
                         frame,
                         callee_chunk,
                         *argc,
@@ -550,7 +552,7 @@ pub(super) fn run_chunk(
                 }
                 let new_frame = {
                     frame.ip += 1;
-                    push_call_frame(
+                    frame::push_call_frame(
                         frame,
                         callee_chunk,
                         *argc,
@@ -987,169 +989,15 @@ fn handle_hot_instr(
                 }
             }
         }
-        Instr::StrLen => {
-            let Some(value) = frame.stack.pop() else {
-                return Err(err_at(
-                    VmErrorKind::StackUnderflow,
-                    "Stack underflow on StrLen",
-                    function_name,
-                    ip,
-                ));
-            };
-            frame
-                .stack
-                .push(super::builtins::str::direct_str_len(value)?);
-            frame.ip += 1;
-            Ok(true)
-        }
-        Instr::StrLenLocal(slot) => {
-            let Some(value) = frame.locals.get(*slot) else {
-                return Err(invalid_local_slot(function_name, ip, *slot));
-            };
-            match value {
-                Value::String(s) => frame
-                    .stack
-                    .push(Value::Int(super::builtins::str::str_len_ref(s))),
-                _ => {
-                    return Err(err_at(
-                        VmErrorKind::TypeMismatch,
-                        "StrLenLocal expects String local",
-                        function_name,
-                        ip,
-                    ));
-                }
-            }
-            frame.ip += 1;
-            Ok(true)
-        }
-        Instr::StrIndexOfConst(needle) => {
-            let Some(value) = frame.stack.pop() else {
-                return Err(err_at(
-                    VmErrorKind::StackUnderflow,
-                    "Stack underflow on StrIndexOfConst",
-                    function_name,
-                    ip,
-                ));
-            };
-            frame
-                .stack
-                .push(super::builtins::str::direct_str_index_of_const(
-                    value, needle,
-                )?);
-            frame.ip += 1;
-            Ok(true)
-        }
-        Instr::StrIndexOfLocalConst { slot, needle } => {
-            let Some(value) = frame.locals.get(*slot) else {
-                return Err(invalid_local_slot(function_name, ip, *slot));
-            };
-            match value {
-                Value::String(s) => frame.stack.push(Value::Int(
-                    super::builtins::str::str_index_of_const_or_neg1(s, needle),
-                )),
-                _ => {
-                    return Err(err_at(
-                        VmErrorKind::TypeMismatch,
-                        "StrIndexOfLocalConst expects String local",
-                        function_name,
-                        ip,
-                    ));
-                }
-            }
-            frame.ip += 1;
-            Ok(true)
-        }
-        Instr::StrSliceConst { start, end } => {
-            let Some(value) = frame.stack.pop() else {
-                return Err(err_at(
-                    VmErrorKind::StackUnderflow,
-                    "Stack underflow on StrSliceConst",
-                    function_name,
-                    ip,
-                ));
-            };
-            frame
-                .stack
-                .push(super::builtins::str::direct_str_slice_const(
-                    value, *start, *end,
-                )?);
-            frame.ip += 1;
-            Ok(true)
-        }
-        Instr::StrSliceLocalConst { slot, start, end } => {
-            let Some(value) = frame.locals.get(*slot) else {
-                return Err(invalid_local_slot(function_name, ip, *slot));
-            };
-            match value {
-                Value::String(s) => {
-                    let len = super::builtins::str::str_len_ref(s);
-                    if *start < 0 || *end < 0 || *start > *end || *end > len {
-                        return Err(err_at(
-                            VmErrorKind::IndexOutOfBounds,
-                            format!(
-                                "str.slice bounds out of range: start={}, end={}, len={len}",
-                                start, end
-                            ),
-                            function_name,
-                            ip,
-                        ));
-                    }
-                    frame.stack.push(Value::String(
-                        super::builtins::str::str_slice_const_ref(s, *start, *end).into(),
-                    ));
-                }
-                _ => {
-                    return Err(err_at(
-                        VmErrorKind::TypeMismatch,
-                        "StrSliceLocalConst expects String local",
-                        function_name,
-                        ip,
-                    ));
-                }
-            }
-            frame.ip += 1;
-            Ok(true)
-        }
-        Instr::StrContainsConst(needle) => {
-            let Some(value) = frame.stack.pop() else {
-                return Err(err_at(
-                    VmErrorKind::StackUnderflow,
-                    "Stack underflow on StrContainsConst",
-                    function_name,
-                    ip,
-                ));
-            };
-            frame
-                .stack
-                .push(super::builtins::str::direct_str_contains_const(
-                    value, needle,
-                )?);
-            frame.ip += 1;
-            Ok(true)
-        }
-        Instr::StrContainsLocalConst { slot, needle } => {
-            let Some(value) = frame.locals.get(*slot) else {
-                return Err(invalid_local_slot(function_name, ip, *slot));
-            };
-            match value {
-                Value::String(s) => {
-                    frame
-                        .stack
-                        .push(Value::Bool(super::builtins::str::str_contains_const_ref(
-                            s, needle,
-                        )))
-                }
-                _ => {
-                    return Err(err_at(
-                        VmErrorKind::TypeMismatch,
-                        "StrContainsLocalConst expects String local",
-                        function_name,
-                        ip,
-                    ));
-                }
-            }
-            frame.ip += 1;
-            Ok(true)
+        Instr::StrLen
+        | Instr::StrLenLocal(_)
+        | Instr::StrIndexOfConst(_)
+        | Instr::StrIndexOfLocalConst { .. }
+        | Instr::StrSliceConst { .. }
+        | Instr::StrSliceLocalConst { .. }
+        | Instr::StrContainsConst(_)
+        | Instr::StrContainsLocalConst { .. } => {
+            strings::handle_hot_string_instr(frame, instr, function_name, ip)
         }
         Instr::Add => {
             let Some(r) = frame.stack.pop() else {
@@ -1275,99 +1123,6 @@ fn handle_hot_instr(
         }
         _ => Ok(false),
     }
-}
-
-#[inline(always)]
-fn call_idx_fast<'a>(
-    frame: &mut state::CallFrame<'_>,
-    ctx: IndexedCallCtx<'a, '_>,
-) -> Result<state::CallFrame<'a>, VmError> {
-    if frame.stack.len() < ctx.argc {
-        return Err(err_at(
-            VmErrorKind::StackUnderflow,
-            "Stack underflow on CallIdx",
-            ctx.function_name,
-            ctx.ip,
-        ));
-    }
-    let Some(callee_chunk) = ctx.fn_table.get(ctx.idx).copied() else {
-        return Err(err_at(
-            VmErrorKind::UnknownFunction,
-            format!("Invalid function index `{}`", ctx.idx),
-            ctx.function_name,
-            ctx.ip,
-        ));
-    };
-    if ctx.current_depth + ctx.opts.depth >= ctx.opts.config.max_call_depth {
-        return Err(VmError::new(
-            VmErrorKind::StackOverflow,
-            format!(
-                "Call stack limit exceeded ({})",
-                ctx.opts.config.max_call_depth
-            ),
-        ));
-    }
-    if ctx.argc != callee_chunk.param_count {
-        return Err(VmError::new(
-            VmErrorKind::ArityMismatch,
-            format!(
-                "Function `{}` arity mismatch: expected {}, got {}",
-                callee_chunk.name, callee_chunk.param_count, ctx.argc
-            ),
-        ));
-    }
-    frame.ip += 1;
-    Ok(push_call_frame(
-        frame,
-        callee_chunk,
-        ctx.argc,
-        None,
-        ctx.locals_pool,
-        ctx.stack_pool,
-    ))
-}
-
-struct IndexedCallCtx<'a, 'b> {
-    fn_table: &'a [&'a FunctionChunk],
-    idx: usize,
-    argc: usize,
-    current_depth: usize,
-    opts: RunOptions,
-    function_name: &'b str,
-    ip: usize,
-    locals_pool: &'b mut Vec<Vec<Value>>,
-    stack_pool: &'b mut Vec<Vec<Value>>,
-}
-
-fn push_call_frame<'a>(
-    caller: &mut state::CallFrame<'_>,
-    callee_chunk: &'a FunctionChunk,
-    argc: usize,
-    receiver: Option<Value>,
-    locals_pool: &mut Vec<Vec<Value>>,
-    stack_pool: &mut Vec<Vec<Value>>,
-) -> state::CallFrame<'a> {
-    let mut new_frame = state::CallFrame::with_storage(
-        callee_chunk,
-        &callee_chunk.name,
-        state::acquire_storage(
-            callee_chunk.locals_count,
-            stack_capacity_hint(callee_chunk),
-            locals_pool,
-            stack_pool,
-        ),
-    );
-    if let Some(receiver) = receiver {
-        new_frame.locals.push(receiver);
-    }
-    let split = caller.stack.len() - argc;
-    new_frame.locals.extend(caller.stack.split_off(split));
-    if new_frame.locals.len() < callee_chunk.locals_count {
-        new_frame
-            .locals
-            .resize(callee_chunk.locals_count, Value::Unit);
-    }
-    new_frame
 }
 
 #[cold]
