@@ -305,7 +305,7 @@ pub(super) fn struct_field_add_mul_field_mod_local_to_local(
                 "StructFieldAddMulFieldModLocalToLocal expects Int lhs field",
                 function_name,
                 ip,
-            ))
+            ));
         }
         None => {
             return Err(super::err_at(
@@ -316,7 +316,7 @@ pub(super) fn struct_field_add_mul_field_mod_local_to_local(
                 ),
                 function_name,
                 ip,
-            ))
+            ));
         }
     };
     let rhs_field = match fields.get(rhs_field_slot) {
@@ -327,7 +327,7 @@ pub(super) fn struct_field_add_mul_field_mod_local_to_local(
                 "StructFieldAddMulFieldModLocalToLocal expects Int rhs field",
                 function_name,
                 ip,
-            ))
+            ));
         }
         None => {
             return Err(super::err_at(
@@ -338,7 +338,7 @@ pub(super) fn struct_field_add_mul_field_mod_local_to_local(
                 ),
                 function_name,
                 ip,
-            ))
+            ));
         }
     };
     let arg_value = match locals.get(arg_slot) {
@@ -349,7 +349,7 @@ pub(super) fn struct_field_add_mul_field_mod_local_to_local(
                 "StructFieldAddMulFieldModLocalToLocal expects Int argument local",
                 function_name,
                 ip,
-            ))
+            ));
         }
         None => {
             return Err(super::err_at(
@@ -357,7 +357,7 @@ pub(super) fn struct_field_add_mul_field_mod_local_to_local(
                 format!("Invalid local slot {arg_slot}"),
                 function_name,
                 ip,
-            ))
+            ));
         }
     };
     let arg_value = match arg_op {
