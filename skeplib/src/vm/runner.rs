@@ -288,308 +288,38 @@ pub(super) fn run_chunk(
                     continue;
                 }
             }
-            Instr::Call {
-                name: callee_name,
-                argc,
-            } => {
-                if frame.stack.len() < *argc {
-                    return Err(err_at(
-                        VmErrorKind::StackUnderflow,
-                        "Stack underflow on Call",
-                        function_name,
-                        ip,
-                    ));
-                }
-                let callee_chunk = calls::resolve_chunk(
-                    env.module,
-                    callee_name,
-                    calls::Site { function_name, ip },
-                )?;
-                if current_depth + opts.depth >= opts.config.max_call_depth {
-                    return Err(VmError::new(
-                        VmErrorKind::StackOverflow,
-                        format!("Call stack limit exceeded ({})", opts.config.max_call_depth),
-                    ));
-                }
-                if *argc != callee_chunk.param_count {
-                    return Err(VmError::new(
-                        VmErrorKind::ArityMismatch,
-                        format!(
-                            "Function `{}` arity mismatch: expected {}, got {}",
-                            callee_name, callee_chunk.param_count, argc
-                        ),
-                    ));
-                }
-                let new_frame = {
-                    frame.ip += 1;
-                    frame::push_call_frame(
-                        frame,
-                        callee_chunk,
-                        *argc,
-                        None,
-                        &mut locals_pool,
-                        &mut stack_pool,
-                    )
-                };
-                frames.push(new_frame);
-                continue;
-            }
-            Instr::CallIdx { idx, argc } => {
-                let new_frame = frame::call_idx_fast(
+            Instr::Call { .. }
+            | Instr::CallIdx { .. }
+            | Instr::CallIdxAddConst(_)
+            | Instr::CallIdxStructFieldAdd(_)
+            | Instr::CallValue { .. }
+            | Instr::CallMethod { .. }
+            | Instr::CallMethodId { .. }
+            | Instr::CallBuiltin { .. }
+            | Instr::CallBuiltinId { .. } => {
+                if let Some(new_frame) = calls::handle_call_instr(
                     frame,
-                    frame::IndexedCallCtx {
+                    instr,
+                    calls::DispatchCtx {
+                        module: env.module,
                         fn_table: env.fn_table,
-                        idx: *idx,
-                        argc: *argc,
+                        host: env.host,
+                        reg: env.reg,
                         current_depth,
-                        opts,
+                        opts: calls::CallOptions {
+                            depth: opts.depth,
+                            config: opts.config,
+                        },
                         function_name,
                         ip,
                         locals_pool: &mut locals_pool,
                         stack_pool: &mut stack_pool,
                     },
-                )?;
-                frames.push(new_frame);
-                continue;
-            }
-            Instr::CallIdxAddConst(rhs) => {
-                let Some(value) = frame.stack.pop() else {
-                    return Err(err_at(
-                        VmErrorKind::StackUnderflow,
-                        "Stack underflow on CallIdxAddConst",
-                        function_name,
-                        ip,
-                    ));
-                };
-                match value {
-                    Value::Int(lhs) => frame.stack.push(Value::Int(lhs + rhs)),
-                    _ => {
-                        return Err(err_at(
-                            VmErrorKind::TypeMismatch,
-                            "CallIdxAddConst expects Int argument",
-                            function_name,
-                            ip,
-                        ));
-                    }
+                )? {
+                    frames.push(new_frame);
+                    continue;
                 }
             }
-            Instr::CallIdxStructFieldAdd(field_slot) => {
-                let Some(arg) = frame.stack.pop() else {
-                    return Err(err_at(
-                        VmErrorKind::StackUnderflow,
-                        "Stack underflow on CallIdxStructFieldAdd arg",
-                        function_name,
-                        ip,
-                    ));
-                };
-                let Some(receiver) = frame.stack.pop() else {
-                    return Err(err_at(
-                        VmErrorKind::StackUnderflow,
-                        "Stack underflow on CallIdxStructFieldAdd receiver",
-                        function_name,
-                        ip,
-                    ));
-                };
-                let Value::Struct { fields, .. } = receiver else {
-                    return Err(err_at(
-                        VmErrorKind::TypeMismatch,
-                        "CallIdxStructFieldAdd expects Struct receiver",
-                        function_name,
-                        ip,
-                    ));
-                };
-                let Some(field_value) = fields.get(*field_slot) else {
-                    return Err(err_at(
-                        VmErrorKind::TypeMismatch,
-                        format!("Unknown struct field slot `{field_slot}`"),
-                        function_name,
-                        ip,
-                    ));
-                };
-                match (field_value, arg) {
-                    (Value::Int(lhs), Value::Int(rhs)) => frame.stack.push(Value::Int(*lhs + rhs)),
-                    _ => {
-                        return Err(err_at(
-                            VmErrorKind::TypeMismatch,
-                            "CallIdxStructFieldAdd expects Int field and Int argument",
-                            function_name,
-                            ip,
-                        ));
-                    }
-                }
-            }
-            Instr::CallValue { argc } => {
-                if frame.stack.len() < *argc + 1 {
-                    return Err(err_at(
-                        VmErrorKind::StackUnderflow,
-                        "Stack underflow on CallValue",
-                        function_name,
-                        ip,
-                    ));
-                }
-                let callee_index = frame.stack.len() - *argc - 1;
-                let callee = frame.stack.remove(callee_index);
-                let callee_chunk = calls::resolve_function_value(
-                    env.module,
-                    env.fn_table,
-                    callee,
-                    calls::Site { function_name, ip },
-                )?;
-                if current_depth + opts.depth >= opts.config.max_call_depth {
-                    return Err(VmError::new(
-                        VmErrorKind::StackOverflow,
-                        format!("Call stack limit exceeded ({})", opts.config.max_call_depth),
-                    ));
-                }
-                if *argc != callee_chunk.param_count {
-                    return Err(VmError::new(
-                        VmErrorKind::ArityMismatch,
-                        format!(
-                            "Function `{}` arity mismatch: expected {}, got {}",
-                            callee_chunk.name, callee_chunk.param_count, argc
-                        ),
-                    ));
-                }
-                let new_frame = {
-                    frame.ip += 1;
-                    frame::push_call_frame(
-                        frame,
-                        callee_chunk,
-                        *argc,
-                        None,
-                        &mut locals_pool,
-                        &mut stack_pool,
-                    )
-                };
-                frames.push(new_frame);
-                continue;
-            }
-            Instr::CallMethod {
-                name: method_name,
-                argc,
-            } => {
-                if frame.stack.len() < *argc + 1 {
-                    return Err(err_at(
-                        VmErrorKind::StackUnderflow,
-                        "Stack underflow on CallMethod",
-                        function_name,
-                        ip,
-                    ));
-                }
-                let receiver_index = frame.stack.len() - *argc - 1;
-                let receiver = frame.stack.remove(receiver_index);
-                let callee_chunk = calls::resolve_method(
-                    env.module,
-                    env.fn_table,
-                    &receiver,
-                    method_name,
-                    calls::Site { function_name, ip },
-                )?;
-                if current_depth + opts.depth >= opts.config.max_call_depth {
-                    return Err(VmError::new(
-                        VmErrorKind::StackOverflow,
-                        format!("Call stack limit exceeded ({})", opts.config.max_call_depth),
-                    ));
-                }
-                if *argc + 1 != callee_chunk.param_count {
-                    return Err(VmError::new(
-                        VmErrorKind::ArityMismatch,
-                        format!(
-                            "Function `{}` arity mismatch: expected {}, got {}",
-                            callee_chunk.name,
-                            callee_chunk.param_count,
-                            argc + 1
-                        ),
-                    ));
-                }
-                let new_frame = {
-                    frame.ip += 1;
-                    frame::push_call_frame(
-                        frame,
-                        callee_chunk,
-                        *argc,
-                        Some(receiver),
-                        &mut locals_pool,
-                        &mut stack_pool,
-                    )
-                };
-                frames.push(new_frame);
-                continue;
-            }
-            Instr::CallMethodId { id, argc } => {
-                if frame.stack.len() < *argc + 1 {
-                    return Err(err_at(
-                        VmErrorKind::StackUnderflow,
-                        "Stack underflow on CallMethodId",
-                        function_name,
-                        ip,
-                    ));
-                }
-                let receiver_index = frame.stack.len() - *argc - 1;
-                let receiver = frame.stack.remove(receiver_index);
-                let callee_chunk = calls::resolve_method_id(
-                    env.module,
-                    env.fn_table,
-                    &receiver,
-                    *id,
-                    calls::Site { function_name, ip },
-                )?;
-                if current_depth + opts.depth >= opts.config.max_call_depth {
-                    return Err(VmError::new(
-                        VmErrorKind::StackOverflow,
-                        format!("Call stack limit exceeded ({})", opts.config.max_call_depth),
-                    ));
-                }
-                if *argc + 1 != callee_chunk.param_count {
-                    return Err(VmError::new(
-                        VmErrorKind::ArityMismatch,
-                        format!(
-                            "Function `{}` arity mismatch: expected {}, got {}",
-                            callee_chunk.name,
-                            callee_chunk.param_count,
-                            argc + 1
-                        ),
-                    ));
-                }
-                let new_frame = {
-                    frame.ip += 1;
-                    frame::push_call_frame(
-                        frame,
-                        callee_chunk,
-                        *argc,
-                        Some(receiver),
-                        &mut locals_pool,
-                        &mut stack_pool,
-                    )
-                };
-                frames.push(new_frame);
-                continue;
-            }
-            Instr::CallBuiltin {
-                package,
-                name,
-                argc,
-            } => calls::call_builtin(
-                &mut frame.stack,
-                package,
-                name,
-                *argc,
-                &mut calls::CallEnv {
-                    host: env.host,
-                    reg: env.reg,
-                },
-                calls::Site { function_name, ip },
-            )?,
-            Instr::CallBuiltinId { id, argc } => calls::call_builtin_id(
-                &mut frame.stack,
-                *id,
-                *argc,
-                &mut calls::CallEnv {
-                    host: env.host,
-                    reg: env.reg,
-                },
-                calls::Site { function_name, ip },
-            )?,
             Instr::StrLen
             | Instr::StrLenLocal(_)
             | Instr::StrIndexOfConst(_)

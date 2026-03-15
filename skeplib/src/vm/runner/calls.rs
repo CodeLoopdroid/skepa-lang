@@ -1,12 +1,20 @@
-use crate::bytecode::{BytecodeModule, FunctionChunk, Value};
-use crate::vm::{BuiltinHost, BuiltinRegistry, VmError, VmErrorKind};
+use crate::bytecode::{BytecodeModule, FunctionChunk, Instr, Value};
+use crate::vm::{BuiltinHost, BuiltinRegistry, VmConfig, VmError, VmErrorKind};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
 
+use super::{err_at, frame, state};
+
 pub(super) struct CallEnv<'a> {
     pub host: &'a mut dyn BuiltinHost,
     pub reg: &'a BuiltinRegistry,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct CallOptions {
+    pub depth: usize,
+    pub config: VmConfig,
 }
 
 pub(super) struct Site<'a> {
@@ -268,4 +276,353 @@ pub(super) fn call_builtin_id(
     let ret = env.reg.call_by_id(env.host, id, call_args)?;
     stack.push(ret);
     Ok(())
+}
+
+pub(super) struct DispatchCtx<'a, 'b> {
+    pub module: &'a BytecodeModule,
+    pub fn_table: &'a [&'a FunctionChunk],
+    pub host: &'b mut dyn BuiltinHost,
+    pub reg: &'b BuiltinRegistry,
+    pub current_depth: usize,
+    pub opts: CallOptions,
+    pub function_name: &'b str,
+    pub ip: usize,
+    pub locals_pool: &'b mut Vec<Vec<Value>>,
+    pub stack_pool: &'b mut Vec<Vec<Value>>,
+}
+
+pub(super) fn handle_call_instr<'a>(
+    frame: &mut state::CallFrame<'_>,
+    instr: &Instr,
+    ctx: DispatchCtx<'a, '_>,
+) -> Result<Option<state::CallFrame<'a>>, VmError> {
+    match instr {
+        Instr::Call {
+            name: callee_name,
+            argc,
+        } => {
+            if frame.stack.len() < *argc {
+                return Err(err_at(
+                    VmErrorKind::StackUnderflow,
+                    "Stack underflow on Call",
+                    ctx.function_name,
+                    ctx.ip,
+                ));
+            }
+            let callee_chunk = resolve_chunk(
+                ctx.module,
+                callee_name,
+                Site {
+                    function_name: ctx.function_name,
+                    ip: ctx.ip,
+                },
+            )?;
+            if ctx.current_depth + ctx.opts.depth >= ctx.opts.config.max_call_depth {
+                return Err(VmError::new(
+                    VmErrorKind::StackOverflow,
+                    format!(
+                        "Call stack limit exceeded ({})",
+                        ctx.opts.config.max_call_depth
+                    ),
+                ));
+            }
+            if *argc != callee_chunk.param_count {
+                return Err(VmError::new(
+                    VmErrorKind::ArityMismatch,
+                    format!(
+                        "Function `{}` arity mismatch: expected {}, got {}",
+                        callee_name, callee_chunk.param_count, argc
+                    ),
+                ));
+            }
+            frame.ip += 1;
+            Ok(Some(frame::push_call_frame(
+                frame,
+                callee_chunk,
+                *argc,
+                None,
+                ctx.locals_pool,
+                ctx.stack_pool,
+            )))
+        }
+        Instr::CallIdx { idx, argc } => {
+            let new_frame = frame::call_idx_fast(
+                frame,
+                frame::IndexedCallCtx {
+                    fn_table: ctx.fn_table,
+                    idx: *idx,
+                    argc: *argc,
+                    current_depth: ctx.current_depth,
+                    opts: super::RunOptions {
+                        depth: ctx.opts.depth,
+                        config: ctx.opts.config,
+                    },
+                    function_name: ctx.function_name,
+                    ip: ctx.ip,
+                    locals_pool: ctx.locals_pool,
+                    stack_pool: ctx.stack_pool,
+                },
+            )?;
+            Ok(Some(new_frame))
+        }
+        Instr::CallIdxAddConst(rhs) => {
+            let Some(value) = frame.stack.pop() else {
+                return Err(err_at(
+                    VmErrorKind::StackUnderflow,
+                    "Stack underflow on CallIdxAddConst",
+                    ctx.function_name,
+                    ctx.ip,
+                ));
+            };
+            match value {
+                Value::Int(lhs) => frame.stack.push(Value::Int(lhs + rhs)),
+                _ => {
+                    return Err(err_at(
+                        VmErrorKind::TypeMismatch,
+                        "CallIdxAddConst expects Int argument",
+                        ctx.function_name,
+                        ctx.ip,
+                    ));
+                }
+            }
+            Ok(None)
+        }
+        Instr::CallIdxStructFieldAdd(field_slot) => {
+            let Some(arg) = frame.stack.pop() else {
+                return Err(err_at(
+                    VmErrorKind::StackUnderflow,
+                    "Stack underflow on CallIdxStructFieldAdd arg",
+                    ctx.function_name,
+                    ctx.ip,
+                ));
+            };
+            let Some(receiver) = frame.stack.pop() else {
+                return Err(err_at(
+                    VmErrorKind::StackUnderflow,
+                    "Stack underflow on CallIdxStructFieldAdd receiver",
+                    ctx.function_name,
+                    ctx.ip,
+                ));
+            };
+            let Value::Struct { fields, .. } = receiver else {
+                return Err(err_at(
+                    VmErrorKind::TypeMismatch,
+                    "CallIdxStructFieldAdd expects Struct receiver",
+                    ctx.function_name,
+                    ctx.ip,
+                ));
+            };
+            let Some(field_value) = fields.get(*field_slot) else {
+                return Err(err_at(
+                    VmErrorKind::TypeMismatch,
+                    format!("Unknown struct field slot `{field_slot}`"),
+                    ctx.function_name,
+                    ctx.ip,
+                ));
+            };
+            match (field_value, arg) {
+                (Value::Int(lhs), Value::Int(rhs)) => frame.stack.push(Value::Int(*lhs + rhs)),
+                _ => {
+                    return Err(err_at(
+                        VmErrorKind::TypeMismatch,
+                        "CallIdxStructFieldAdd expects Int field and Int argument",
+                        ctx.function_name,
+                        ctx.ip,
+                    ));
+                }
+            }
+            Ok(None)
+        }
+        Instr::CallValue { argc } => {
+            if frame.stack.len() < *argc + 1 {
+                return Err(err_at(
+                    VmErrorKind::StackUnderflow,
+                    "Stack underflow on CallValue",
+                    ctx.function_name,
+                    ctx.ip,
+                ));
+            }
+            let callee_index = frame.stack.len() - *argc - 1;
+            let callee = frame.stack.remove(callee_index);
+            let callee_chunk = resolve_function_value(
+                ctx.module,
+                ctx.fn_table,
+                callee,
+                Site {
+                    function_name: ctx.function_name,
+                    ip: ctx.ip,
+                },
+            )?;
+            if ctx.current_depth + ctx.opts.depth >= ctx.opts.config.max_call_depth {
+                return Err(VmError::new(
+                    VmErrorKind::StackOverflow,
+                    format!(
+                        "Call stack limit exceeded ({})",
+                        ctx.opts.config.max_call_depth
+                    ),
+                ));
+            }
+            if *argc != callee_chunk.param_count {
+                return Err(VmError::new(
+                    VmErrorKind::ArityMismatch,
+                    format!(
+                        "Function `{}` arity mismatch: expected {}, got {}",
+                        callee_chunk.name, callee_chunk.param_count, argc
+                    ),
+                ));
+            }
+            frame.ip += 1;
+            Ok(Some(frame::push_call_frame(
+                frame,
+                callee_chunk,
+                *argc,
+                None,
+                ctx.locals_pool,
+                ctx.stack_pool,
+            )))
+        }
+        Instr::CallMethod {
+            name: method_name,
+            argc,
+        } => {
+            if frame.stack.len() < *argc + 1 {
+                return Err(err_at(
+                    VmErrorKind::StackUnderflow,
+                    "Stack underflow on CallMethod",
+                    ctx.function_name,
+                    ctx.ip,
+                ));
+            }
+            let receiver_index = frame.stack.len() - *argc - 1;
+            let receiver = frame.stack.remove(receiver_index);
+            let callee_chunk = resolve_method(
+                ctx.module,
+                ctx.fn_table,
+                &receiver,
+                method_name,
+                Site {
+                    function_name: ctx.function_name,
+                    ip: ctx.ip,
+                },
+            )?;
+            if ctx.current_depth + ctx.opts.depth >= ctx.opts.config.max_call_depth {
+                return Err(VmError::new(
+                    VmErrorKind::StackOverflow,
+                    format!(
+                        "Call stack limit exceeded ({})",
+                        ctx.opts.config.max_call_depth
+                    ),
+                ));
+            }
+            if *argc + 1 != callee_chunk.param_count {
+                return Err(VmError::new(
+                    VmErrorKind::ArityMismatch,
+                    format!(
+                        "Function `{}` arity mismatch: expected {}, got {}",
+                        callee_chunk.name,
+                        callee_chunk.param_count,
+                        argc + 1
+                    ),
+                ));
+            }
+            frame.ip += 1;
+            Ok(Some(frame::push_call_frame(
+                frame,
+                callee_chunk,
+                *argc,
+                Some(receiver),
+                ctx.locals_pool,
+                ctx.stack_pool,
+            )))
+        }
+        Instr::CallMethodId { id, argc } => {
+            if frame.stack.len() < *argc + 1 {
+                return Err(err_at(
+                    VmErrorKind::StackUnderflow,
+                    "Stack underflow on CallMethodId",
+                    ctx.function_name,
+                    ctx.ip,
+                ));
+            }
+            let receiver_index = frame.stack.len() - *argc - 1;
+            let receiver = frame.stack.remove(receiver_index);
+            let callee_chunk = resolve_method_id(
+                ctx.module,
+                ctx.fn_table,
+                &receiver,
+                *id,
+                Site {
+                    function_name: ctx.function_name,
+                    ip: ctx.ip,
+                },
+            )?;
+            if ctx.current_depth + ctx.opts.depth >= ctx.opts.config.max_call_depth {
+                return Err(VmError::new(
+                    VmErrorKind::StackOverflow,
+                    format!(
+                        "Call stack limit exceeded ({})",
+                        ctx.opts.config.max_call_depth
+                    ),
+                ));
+            }
+            if *argc + 1 != callee_chunk.param_count {
+                return Err(VmError::new(
+                    VmErrorKind::ArityMismatch,
+                    format!(
+                        "Function `{}` arity mismatch: expected {}, got {}",
+                        callee_chunk.name,
+                        callee_chunk.param_count,
+                        argc + 1
+                    ),
+                ));
+            }
+            frame.ip += 1;
+            Ok(Some(frame::push_call_frame(
+                frame,
+                callee_chunk,
+                *argc,
+                Some(receiver),
+                ctx.locals_pool,
+                ctx.stack_pool,
+            )))
+        }
+        Instr::CallBuiltin {
+            package,
+            name,
+            argc,
+        } => {
+            call_builtin(
+                &mut frame.stack,
+                package,
+                name,
+                *argc,
+                &mut CallEnv {
+                    host: ctx.host,
+                    reg: ctx.reg,
+                },
+                Site {
+                    function_name: ctx.function_name,
+                    ip: ctx.ip,
+                },
+            )?;
+            Ok(None)
+        }
+        Instr::CallBuiltinId { id, argc } => {
+            call_builtin_id(
+                &mut frame.stack,
+                *id,
+                *argc,
+                &mut CallEnv {
+                    host: ctx.host,
+                    reg: ctx.reg,
+                },
+                Site {
+                    function_name: ctx.function_name,
+                    ip: ctx.ip,
+                },
+            )?;
+            Ok(None)
+        }
+        _ => Ok(None),
+    }
 }
