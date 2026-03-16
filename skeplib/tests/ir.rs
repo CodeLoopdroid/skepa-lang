@@ -3,14 +3,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use skeplib::bytecode;
 use skeplib::bytecode::Value;
-use skeplib::ir::{self, IrInterpreter, IrValue, PrettyIr};
-use skeplib::vm::Vm;
+use skeplib::ir::{self, IrInterpError, IrInterpreter, IrValue, PrettyIr};
+use skeplib::vm::{Vm, VmErrorKind};
 
 enum ExpectedValue<'a> {
     Int(i64),
     Bool(bool),
     Float(f64),
     String(&'a str),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExpectedErrorKind {
+    DivisionByZero,
+    IndexOutOfBounds,
+    TypeMismatch,
 }
 
 fn assert_bytecode_and_ir_accept_same_source(source: &str, expected: ExpectedValue<'_>) {
@@ -62,6 +69,30 @@ fn assert_bytecode_and_ir_accept_same_project_entry(
         ExpectedValue::Float(expected) => assert_eq!(value, IrValue::Float(expected)),
         ExpectedValue::String(expected) => assert_eq!(value, IrValue::String(expected.into())),
     }
+}
+
+fn assert_bytecode_and_ir_reject_same_source(source: &str, expected: ExpectedErrorKind) {
+    let module = bytecode::compile_source(source).expect("bytecode lowering should succeed");
+    let vm_err = Vm::run_module_main(&module).expect_err("bytecode vm should fail");
+    let vm_kind = match vm_err.kind {
+        VmErrorKind::DivisionByZero => ExpectedErrorKind::DivisionByZero,
+        VmErrorKind::IndexOutOfBounds => ExpectedErrorKind::IndexOutOfBounds,
+        VmErrorKind::TypeMismatch => ExpectedErrorKind::TypeMismatch,
+        other => panic!("unexpected VM error kind in comparison test: {other:?}"),
+    };
+    assert_eq!(vm_kind, expected);
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let ir_err = IrInterpreter::new(&program)
+        .run_main()
+        .expect_err("IR interpreter should fail");
+    let ir_kind = match ir_err {
+        IrInterpError::DivisionByZero => ExpectedErrorKind::DivisionByZero,
+        IrInterpError::IndexOutOfBounds => ExpectedErrorKind::IndexOutOfBounds,
+        IrInterpError::TypeMismatch(_) => ExpectedErrorKind::TypeMismatch,
+        other => panic!("unexpected IR error kind in comparison test: {other:?}"),
+    };
+    assert_eq!(ir_kind, expected);
 }
 
 #[test]
@@ -506,6 +537,29 @@ fn main() -> Int {
     assert_bytecode_and_ir_accept_same_project_entry(&entry, ExpectedValue::Int(40));
 
     let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bytecode_and_ir_reject_same_division_by_zero_source() {
+    let source = r#"
+fn main() -> Int {
+  return 8 / 0;
+}
+"#;
+
+    assert_bytecode_and_ir_reject_same_source(source, ExpectedErrorKind::DivisionByZero);
+}
+
+#[test]
+fn bytecode_and_ir_reject_same_array_oob_source() {
+    let source = r#"
+fn main() -> Int {
+  let arr: [Int; 2] = [1; 2];
+  return arr[3];
+}
+"#;
+
+    assert_bytecode_and_ir_reject_same_source(source, ExpectedErrorKind::IndexOutOfBounds);
 }
 
 #[test]
