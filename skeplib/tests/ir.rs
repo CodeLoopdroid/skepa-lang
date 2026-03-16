@@ -50,3 +50,21 @@ fn main() -> Int {
     assert!(printed.contains("CallBuiltin"));
     assert!(printed.contains("StoreGlobal"));
 }
+
+#[test]
+fn lower_static_array_ops_to_ir() {
+    let source = r#"
+fn main() -> Int {
+  let arr: [Int; 4] = [0; 4];
+  arr[1] = 7;
+  arr[2] = arr[1] + 3;
+  return arr[2];
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let printed = PrettyIr::new(&program).to_string();
+    assert!(printed.contains("MakeArrayRepeat"));
+    assert!(printed.contains("ArraySet"));
+    assert!(printed.contains("ArrayGet"));
+}

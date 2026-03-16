@@ -254,6 +254,35 @@ impl IrLowerer {
                 );
                 true
             }
+            Stmt::Assign {
+                target: AssignTarget::Index { base, index },
+                value,
+            } => {
+                let array = match self.compile_expr(func, lowering, base) {
+                    Some(value) => value,
+                    None => return false,
+                };
+                let index = match self.compile_expr(func, lowering, index) {
+                    Some(value) => value,
+                    None => return false,
+                };
+                let value = match self.compile_expr(func, lowering, value) {
+                    Some(value) => value,
+                    None => return false,
+                };
+                let elem_ty = self.array_element_type(func, &array);
+                self.builder.push_instr(
+                    func,
+                    lowering.current_block,
+                    Instr::ArraySet {
+                        elem_ty,
+                        array,
+                        index,
+                        value,
+                    },
+                );
+                true
+            }
             Stmt::Expr(expr) => self.compile_expr(func, lowering, expr).is_some(),
             Stmt::Return(value) => {
                 let ret = match value {
@@ -398,6 +427,68 @@ impl IrLowerer {
                         None
                     })
             }
+            Expr::ArrayLit(items) => {
+                let mut lowered_items = Vec::with_capacity(items.len());
+                for item in items {
+                    lowered_items.push(self.compile_expr(func, lowering, item)?);
+                }
+                let elem_ty = lowered_items
+                    .first()
+                    .map(|item| self.infer_operand_type(func, item))
+                    .unwrap_or(IrType::Unknown);
+                let ty = IrType::Array {
+                    elem: Box::new(elem_ty.clone()),
+                    size: lowered_items.len(),
+                };
+                let dst = self.builder.push_temp(func, ty);
+                self.builder.push_instr(
+                    func,
+                    lowering.current_block,
+                    Instr::MakeArray {
+                        dst,
+                        elem_ty,
+                        items: lowered_items,
+                    },
+                );
+                Some(Operand::Temp(dst))
+            }
+            Expr::ArrayRepeat { value, size } => {
+                let value = self.compile_expr(func, lowering, value)?;
+                let elem_ty = self.infer_operand_type(func, &value);
+                let ty = IrType::Array {
+                    elem: Box::new(elem_ty.clone()),
+                    size: *size,
+                };
+                let dst = self.builder.push_temp(func, ty);
+                self.builder.push_instr(
+                    func,
+                    lowering.current_block,
+                    Instr::MakeArrayRepeat {
+                        dst,
+                        elem_ty,
+                        value,
+                        size: *size,
+                    },
+                );
+                Some(Operand::Temp(dst))
+            }
+            Expr::Index { base, index } => {
+                let array = self.compile_expr(func, lowering, base)?;
+                let index = self.compile_expr(func, lowering, index)?;
+                let elem_ty = self.array_element_type(func, &array);
+                let dst = self.builder.push_temp(func, elem_ty.clone());
+                self.builder.push_instr(
+                    func,
+                    lowering.current_block,
+                    Instr::ArrayGet {
+                        dst,
+                        elem_ty,
+                        array,
+                        index,
+                    },
+                );
+                Some(Operand::Temp(dst))
+            }
             Expr::Group(inner) => self.compile_expr(func, lowering, inner),
             Expr::Unary { op, expr } => {
                 let operand = self.compile_expr(func, lowering, expr)?;
@@ -485,6 +576,14 @@ impl IrLowerer {
                 .map(|local| local.ty.clone())
                 .unwrap_or(IrType::Unknown),
             Operand::Global(_) => IrType::Unknown,
+        }
+    }
+
+    fn array_element_type(&self, func: &crate::ir::IrFunction, operand: &Operand) -> IrType {
+        match self.infer_operand_type(func, operand) {
+            IrType::Array { elem, .. } => *elem,
+            IrType::Vec { elem } => *elem,
+            _ => IrType::Unknown,
         }
     }
 
