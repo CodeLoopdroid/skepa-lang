@@ -96,16 +96,26 @@ pub fn link_object_file_to_executable(object_path: &Path, path: &Path) -> Result
     let object = object_path.as_os_str().to_string_lossy().into_owned();
     let runtime = runtime.as_os_str().to_string_lossy().into_owned();
     let output = path.as_os_str().to_string_lossy().into_owned();
-    let mut args = vec![object.as_str()];
-    if cfg!(windows) {
-        args.extend(["-Wl,--start-group", runtime.as_str(), "-Wl,--end-group"]);
-    } else {
-        args.push(runtime.as_str());
-    }
-    args.extend(["-o", output.as_str()]);
-    let native_libs = runtime_native_libraries();
-    args.extend(native_libs.iter().copied());
+    let args = link_args_for_executable(&object, &runtime, &output);
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
     run_tool("clang", &args)
+}
+
+fn link_args_for_executable(object: &str, runtime: &str, output: &str) -> Vec<String> {
+    let mut args = vec![object.to_string()];
+    if cfg!(windows) {
+        args.extend([
+            "-Wl,--start-group".to_string(),
+            runtime.to_string(),
+            "-Wl,--end-group".to_string(),
+        ]);
+    } else {
+        args.push(runtime.to_string());
+        args.push("-no-pie".to_string());
+    }
+    args.extend(["-o".to_string(), output.to_string()]);
+    args.extend(runtime_native_libraries().into_iter().map(str::to_string));
+    args
 }
 
 fn run_tool(tool: &str, args: &[&str]) -> Result<(), CodegenError> {
@@ -201,5 +211,20 @@ fn runtime_native_libraries() -> Vec<&'static str> {
         ]
     } else {
         Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::link_args_for_executable;
+
+    #[test]
+    fn native_link_args_disable_pie_on_non_windows() {
+        let args = link_args_for_executable("input.o", "libskepart.a", "out");
+        if cfg!(windows) {
+            assert!(!args.iter().any(|arg| arg == "-no-pie"));
+        } else {
+            assert!(args.iter().any(|arg| arg == "-no-pie"));
+        }
     }
 }
