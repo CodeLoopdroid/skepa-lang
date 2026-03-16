@@ -490,14 +490,56 @@ impl<'a> IrInterpreter<'a> {
                 }
             }
             Instr::CallBuiltin { builtin, .. } => {
-                return Err(IrInterpError::UnsupportedBuiltin(format!(
-                    "{}.{}",
-                    builtin.package, builtin.name
-                )));
+                let args = builtin_args(frame, &self.globals, instr)?;
+                let value = self.eval_builtin(builtin, &args)?;
+                if let Instr::CallBuiltin { dst, .. } = instr
+                    && let Some(dst) = dst
+                {
+                    frame.temps.insert(*dst, value);
+                }
             }
         }
         let _ = func;
         Ok(())
+    }
+
+    fn eval_builtin(
+        &self,
+        builtin: &crate::ir::BuiltinCall,
+        args: &[IrValue],
+    ) -> Result<IrValue, IrInterpError> {
+        match (builtin.package.as_str(), builtin.name.as_str(), args) {
+            ("str", "len", [IrValue::String(value)]) => {
+                Ok(IrValue::Int(value.chars().count() as i64))
+            }
+            ("str", "indexOf", [IrValue::String(haystack), IrValue::String(needle)]) => Ok(
+                IrValue::Int(haystack.find(needle).map(|idx| idx as i64).unwrap_or(-1)),
+            ),
+            ("str", "contains", [IrValue::String(haystack), IrValue::String(needle)]) => {
+                Ok(IrValue::Bool(haystack.contains(needle)))
+            }
+            (
+                "str",
+                "slice",
+                [
+                    IrValue::String(value),
+                    IrValue::Int(start),
+                    IrValue::Int(end),
+                ],
+            ) => {
+                let start = usize::try_from(*start).map_err(|_| IrInterpError::IndexOutOfBounds)?;
+                let end = usize::try_from(*end).map_err(|_| IrInterpError::IndexOutOfBounds)?;
+                let chars = value.chars().collect::<Vec<_>>();
+                if start > end || end > chars.len() {
+                    return Err(IrInterpError::IndexOutOfBounds);
+                }
+                Ok(IrValue::String(chars[start..end].iter().collect()))
+            }
+            _ => Err(IrInterpError::UnsupportedBuiltin(format!(
+                "{}.{}",
+                builtin.package, builtin.name
+            ))),
+        }
     }
 
     fn read_index(&self, frame: &Frame, operand: &Operand) -> Result<usize, IrInterpError> {
@@ -569,6 +611,22 @@ impl<'a> IrInterpreter<'a> {
             ConstValue::String(v) => IrValue::String(v.clone()),
             ConstValue::Unit => IrValue::Unit,
         }
+    }
+}
+
+fn builtin_args(
+    frame: &Frame,
+    globals: &[IrValue],
+    instr: &Instr,
+) -> Result<Vec<IrValue>, IrInterpError> {
+    match instr {
+        Instr::CallBuiltin { args, .. } => args
+            .iter()
+            .map(|arg| frame.read_operand(arg, globals))
+            .collect::<Result<Vec<_>, _>>(),
+        _ => Err(IrInterpError::InvalidOperand(
+            "builtin args on non-builtin instr",
+        )),
     }
 }
 

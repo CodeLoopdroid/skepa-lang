@@ -464,3 +464,22 @@ fn main() -> Int {
 
     assert_bytecode_and_ir_accept_same_source(source, 7);
 }
+
+#[test]
+fn bytecode_and_ir_accept_same_string_builtin_source() {
+    let source = r#"
+fn main() -> Int {
+  let s = "skepa-language-benchmark";
+  let total = 0;
+  total = total + str.len(s);
+  total = total + str.indexOf(s, "bench");
+  let cut = str.slice(s, 6, 14);
+  if (str.contains(cut, "language")) {
+    total = total + 1;
+  }
+  return total;
+}
+"#;
+
+    assert_bytecode_and_ir_accept_same_source(source, 40);
+}
