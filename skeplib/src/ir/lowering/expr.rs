@@ -18,6 +18,13 @@ impl IrLowerer {
     ) -> Option<Operand> {
         match expr {
             Expr::IntLit(value) => Some(Operand::Const(ConstValue::Int(*value))),
+            Expr::FloatLit(value) => match value.parse::<f64>() {
+                Ok(value) => Some(Operand::Const(ConstValue::Float(value))),
+                Err(_) => {
+                    self.unsupported(format!("invalid float literal `{value}` in IR lowering"));
+                    None
+                }
+            },
             Expr::BoolLit(value) => Some(Operand::Const(ConstValue::Bool(*value))),
             Expr::StringLit(value) => Some(Operand::Const(ConstValue::String(value.clone()))),
             Expr::Ident(name) => lowering
@@ -242,10 +249,6 @@ impl IrLowerer {
                 Some(Operand::Temp(dst))
             }
             Expr::Call { callee, args } => self.compile_call(func, lowering, callee, args),
-            _ => {
-                self.unsupported("expression form is not in the initial IR lowering subset");
-                None
-            }
         }
     }
 

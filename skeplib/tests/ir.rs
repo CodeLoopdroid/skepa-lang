@@ -6,10 +6,22 @@ use skeplib::bytecode::Value;
 use skeplib::ir::{self, IrInterpreter, IrValue, PrettyIr};
 use skeplib::vm::Vm;
 
-fn assert_bytecode_and_ir_accept_same_source(source: &str, expected: i64) {
+enum ExpectedValue<'a> {
+    Int(i64),
+    Bool(bool),
+    Float(f64),
+    String(&'a str),
+}
+
+fn assert_bytecode_and_ir_accept_same_source(source: &str, expected: ExpectedValue<'_>) {
     let module = bytecode::compile_source(source).expect("bytecode lowering should succeed");
     let value = Vm::run_module_main(&module).expect("bytecode vm should run source");
-    assert_eq!(value, Value::Int(expected));
+    match &expected {
+        ExpectedValue::Int(expected) => assert_eq!(value, Value::Int(*expected)),
+        ExpectedValue::Bool(expected) => assert_eq!(value, Value::Bool(*expected)),
+        ExpectedValue::Float(expected) => assert_eq!(value, Value::Float(*expected)),
+        ExpectedValue::String(expected) => assert_eq!(value, Value::String((*expected).into())),
+    }
 
     let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
     assert!(
@@ -19,7 +31,12 @@ fn assert_bytecode_and_ir_accept_same_source(source: &str, expected: i64) {
     let value = IrInterpreter::new(&program)
         .run_main()
         .expect("IR interpreter should run source");
-    assert_eq!(value, IrValue::Int(expected));
+    match expected {
+        ExpectedValue::Int(expected) => assert_eq!(value, IrValue::Int(expected)),
+        ExpectedValue::Bool(expected) => assert_eq!(value, IrValue::Bool(expected)),
+        ExpectedValue::Float(expected) => assert_eq!(value, IrValue::Float(expected)),
+        ExpectedValue::String(expected) => assert_eq!(value, IrValue::String(expected.into())),
+    }
 }
 
 #[test]
@@ -422,7 +439,7 @@ fn main() -> Int {
 }
 "#;
 
-    assert_bytecode_and_ir_accept_same_source(source, 15);
+    assert_bytecode_and_ir_accept_same_source(source, ExpectedValue::Int(15));
 }
 
 #[test]
@@ -446,7 +463,7 @@ fn main() -> Int {
 }
 "#;
 
-    assert_bytecode_and_ir_accept_same_source(source, 16);
+    assert_bytecode_and_ir_accept_same_source(source, ExpectedValue::Int(16));
 }
 
 #[test]
@@ -462,7 +479,7 @@ fn main() -> Int {
 }
 "#;
 
-    assert_bytecode_and_ir_accept_same_source(source, 7);
+    assert_bytecode_and_ir_accept_same_source(source, ExpectedValue::Int(7));
 }
 
 #[test]
@@ -481,5 +498,47 @@ fn main() -> Int {
 }
 "#;
 
-    assert_bytecode_and_ir_accept_same_source(source, 40);
+    assert_bytecode_and_ir_accept_same_source(source, ExpectedValue::Int(40));
+}
+
+#[test]
+fn bytecode_and_ir_accept_same_float_source() {
+    let source = r#"
+fn main() -> Float {
+  let x = 1.5;
+  let y = 2.0;
+  return (x + y) * 2.0;
+}
+"#;
+
+    assert_bytecode_and_ir_accept_same_source(source, ExpectedValue::Float(7.0));
+}
+
+#[test]
+fn bytecode_and_ir_accept_same_bool_short_circuit_source() {
+    let source = r#"
+fn main() -> Bool {
+  let a = true;
+  let b = false;
+  return (a && b) || !b;
+}
+"#;
+
+    assert_bytecode_and_ir_accept_same_source(source, ExpectedValue::Bool(true));
+}
+
+#[test]
+fn bytecode_and_ir_accept_same_string_builtin_output_source() {
+    let source = r#"
+fn main() -> String {
+  let s = "alpha-beta";
+  let cut = str.slice(s, 0, 5);
+  if (str.contains(s, "beta")) {
+    return cut + "-ok";
+  }
+  return "bad";
+}
+"#;
+
+    assert_bytecode_and_ir_accept_same_source(source, ExpectedValue::String("alpha-ok"));
 }
