@@ -496,3 +496,16 @@ Resolver messages include module/path context and may include `did you mean ...`
 - `skepac build-native <entry.sk> <out.exe>`
 - `skepac build-obj <entry.sk> <out.obj>`
 - `skepac build-llvm-ir <entry.sk> <out.ll>`
+
+## 11. Native Workflow
+
+Recommended day-to-day flow:
+- `skepac check app.sk`
+- `skepac run app.sk`
+- `skepac build-native app.sk app.exe`
+- `skepac build-llvm-ir app.sk app.ll`
+
+Migration note:
+- old backend-specific commands were removed
+- the old standalone runner was removed
+- native artifacts and LLVM IR are now the supported build/debug outputs

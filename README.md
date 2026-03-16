@@ -49,6 +49,18 @@ skepac build-obj app.sk app.obj
 skepac build-llvm-ir app.sk app.ll
 ```
 
+## Migration
+
+Old commands were removed:
+- old runtime-runner commands were replaced by `skepac run`
+- old backend-specific build/disassembly flows were removed
+
+Use these native-first commands instead:
+- `skepac check app.sk`
+- `skepac run app.sk`
+- `skepac build-native app.sk app.exe`
+- `skepac build-llvm-ir app.sk app.ll`
+
 ## Examples
 
 - `examples/master.sk`

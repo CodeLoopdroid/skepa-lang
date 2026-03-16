@@ -19,11 +19,48 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install LLVM Toolchain (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm clang
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build Release Binaries
         run: cargo build --release -p skepac
+
+      - name: Verify Native Toolchain (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          llvm-as --version
+          llc --version
+          clang --version
+
+      - name: Native Artifact Smoke Test (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cat > release-smoke.sk <<'EOF'
+          fn main() -> Int {
+            return 0;
+          }
+          EOF
+          target/release/skepac build-native release-smoke.sk release-smoke
+          ./release-smoke
+
+      - name: Native Artifact Smoke Test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          @'
+          fn main() -> Int {
+            return 0;
+          }
+          '@ | Set-Content release-smoke.sk
+          target\release\skepac.exe build-native release-smoke.sk release-smoke.exe
+          .\release-smoke.exe
 
       - name: Package (Unix)
         if: runner.os != 'Windows'

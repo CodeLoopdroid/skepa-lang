@@ -9,16 +9,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install LLVM Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm clang
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - name: Format Check
-        run: cargo fmt --all -- --check
+        run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run Workspace Tests
         run: cargo test --workspace
+      - name: Check Native Toolchain
+        run: |
+          llvm-as --version
+          llc --version
+          clang --version
+      - name: Native Codegen Smoke Test
+        run: cargo test -p skeplib codegen_builds_native_executable_for_int_program -- --exact
+      - name: CLI Native Build Run Smoke Test
+        run: cargo test -p skepac build_native_writes_executable_and_runs -- --exact
       - name: Build Release Bench Targets
         run: cargo build --release -p skepac -p skepabench
       - name: Run Release Benchmark Compare
