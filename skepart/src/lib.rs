@@ -1,6 +1,7 @@
 pub mod array;
 pub mod builtins;
 pub mod error;
+mod ffi;
 pub mod function;
 pub mod host;
 pub mod string;

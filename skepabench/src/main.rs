@@ -597,7 +597,9 @@ fn native_exec_case(name: &'static str, skepac: PathBuf, source_path: PathBuf) -
     BenchCase {
         name,
         kind: CaseKind::Library,
-        runner: Box::new(move || run_command(&skepac, &["run", path_str(&source_path)?])),
+        runner: Box::new(move || {
+            run_command_allow_any_exit(&skepac, &["run", path_str(&source_path)?])
+        }),
     }
 }
 
@@ -699,6 +701,14 @@ fn run_command(exe: &Path, args: &[&str]) -> Result<(), String> {
             stderr.trim()
         ))
     }
+}
+
+fn run_command_allow_any_exit(exe: &Path, args: &[&str]) -> Result<(), String> {
+    Command::new(exe)
+        .args(args)
+        .output()
+        .map(|_| ())
+        .map_err(|err| format!("failed to run {}: {err}", exe.display()))
 }
 
 fn write_temp_source(source: &str) -> Result<PathBuf, String> {

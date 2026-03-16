@@ -1,7 +1,7 @@
 pub mod llvm;
 
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{fs, io};
 
@@ -92,14 +92,20 @@ pub fn compile_program_to_executable(program: &IrProgram, path: &Path) -> Result
 }
 
 pub fn link_object_file_to_executable(object_path: &Path, path: &Path) -> Result<(), CodegenError> {
-    run_tool(
-        "clang",
-        &[
-            object_path.as_os_str().to_string_lossy().as_ref(),
-            "-o",
-            path.as_os_str().to_string_lossy().as_ref(),
-        ],
-    )
+    let runtime = runtime_library_path()?;
+    let object = object_path.as_os_str().to_string_lossy().into_owned();
+    let runtime = runtime.as_os_str().to_string_lossy().into_owned();
+    let output = path.as_os_str().to_string_lossy().into_owned();
+    let mut args = vec![object.as_str()];
+    if cfg!(windows) {
+        args.extend(["-Wl,--start-group", runtime.as_str(), "-Wl,--end-group"]);
+    } else {
+        args.push(runtime.as_str());
+    }
+    args.extend(["-o", output.as_str()]);
+    let native_libs = runtime_native_libraries();
+    args.extend(native_libs.iter().copied());
+    run_tool("clang", &args)
 }
 
 fn run_tool(tool: &str, args: &[&str]) -> Result<(), CodegenError> {
@@ -126,4 +132,74 @@ fn temp_codegen_path(name: &str, ext: &str) -> std::path::PathBuf {
 
 fn object_extension() -> &'static str {
     if cfg!(windows) { "obj" } else { "o" }
+}
+
+fn runtime_library_path() -> Result<PathBuf, CodegenError> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| CodegenError::Tool("failed to locate workspace root".into()))?
+        .to_path_buf();
+    let profile = std::env::var("PROFILE")
+        .ok()
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|path| {
+                    let dir = path.parent()?;
+                    let profile_dir =
+                        if dir.file_name().and_then(|name| name.to_str()) == Some("deps") {
+                            dir.parent()?
+                        } else {
+                            dir
+                        };
+                    profile_dir.file_name().map(|name| name.to_owned())
+                })
+                .and_then(|name| name.into_string().ok())
+        })
+        .unwrap_or_else(|| {
+            if cfg!(debug_assertions) {
+                "debug".to_string()
+            } else {
+                "release".to_string()
+            }
+        });
+    let target_dir = workspace_root.join("target").join(profile);
+    let deps_dir = target_dir.join("deps");
+    let candidates = if deps_dir.exists() {
+        fs::read_dir(&deps_dir)
+            .map_err(|err| CodegenError::Io(err.to_string()))?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.starts_with("libskepart-") && name.ends_with(".a"))
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    if let Some(path) = candidates.into_iter().next() {
+        Ok(path)
+    } else {
+        Err(CodegenError::Tool(format!(
+            "native runtime library missing under {}",
+            deps_dir.display()
+        )))
+    }
+}
+
+fn runtime_native_libraries() -> Vec<&'static str> {
+    if cfg!(windows) {
+        vec![
+            "-lkernel32",
+            "-lntdll",
+            "-luserenv",
+            "-lws2_32",
+            "-ldbghelp",
+        ]
+    } else {
+        Vec::new()
+    }
 }
