@@ -136,9 +136,11 @@ fn main() -> Int {
 "#;
 
     let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let value = IrInterpreter::new(&program)
+        .run_main()
+        .expect("IR interpreter should run optimized source");
+    assert_eq!(value, IrValue::Int(3));
     let printed = PrettyIr::new(&program).to_string();
-    assert!(printed.contains("Const { dst: TempId("));
-    assert!(printed.contains("value: Int(3)"));
     assert!(printed.contains("Jump(BlockId("));
     assert!(!printed.contains("Branch(BranchTerminator"));
 }
@@ -161,6 +163,28 @@ fn main() -> Int {
     assert_eq!(value, IrValue::Int(3));
     let printed = PrettyIr::new(&program).to_string();
     assert!(!printed.contains("Copy {"));
+}
+
+#[test]
+fn compile_source_eliminates_dead_pure_temps() {
+    let source = r#"
+fn main() -> Int {
+  let x = 1 + 2;
+  let y = x + 10;
+  let z = y + 20;
+  return x;
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let value = IrInterpreter::new(&program)
+        .run_main()
+        .expect("IR interpreter should run optimized source");
+    assert_eq!(value, IrValue::Int(3));
+
+    let printed = PrettyIr::new(&program).to_string();
+    assert!(!printed.contains("value: Int(13)"));
+    assert!(!printed.contains("value: Int(33)"));
 }
 
 #[test]
