@@ -108,3 +108,45 @@ fn main() -> Bool {
     assert!(printed.contains("sc_short"));
     assert!(printed.contains("Branch"));
 }
+
+#[test]
+fn lower_named_function_values_and_indirect_calls_to_ir() {
+    let source = r#"
+fn inc(x: Int) -> Int {
+  return x + 1;
+}
+
+fn main() -> Int {
+  let f = inc;
+  return f(4);
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let printed = PrettyIr::new(&program).to_string();
+    assert!(printed.contains("MakeClosure"));
+    assert!(printed.contains("CallIndirect"));
+}
+
+#[test]
+fn lower_non_capturing_function_literals_to_ir() {
+    let source = r#"
+fn main() -> Int {
+  let f = fn(x: Int) -> Int {
+    return x + 2;
+  };
+  return f(5);
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    assert!(
+        program
+            .functions
+            .iter()
+            .any(|func| func.name.starts_with("__fn_lit_"))
+    );
+    let printed = PrettyIr::new(&program).to_string();
+    assert!(printed.contains("MakeClosure"));
+    assert!(printed.contains("CallIndirect"));
+}

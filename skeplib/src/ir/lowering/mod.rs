@@ -43,6 +43,8 @@ struct IrLowerer {
     functions: HashMap<String, (crate::ir::FunctionId, IrType)>,
     globals: HashMap<String, (crate::ir::GlobalId, IrType)>,
     structs: HashMap<String, (crate::ir::StructId, Vec<crate::ir::StructField>)>,
+    lifted_functions: Vec<crate::ir::IrFunction>,
+    fn_lit_counter: usize,
 }
 
 struct FunctionLowering {
@@ -59,6 +61,8 @@ impl IrLowerer {
             functions: HashMap::new(),
             globals: HashMap::new(),
             structs: HashMap::new(),
+            lifted_functions: Vec::new(),
+            fn_lit_counter: 0,
         }
     }
 
@@ -118,6 +122,8 @@ impl IrLowerer {
                 out.functions.push(lowered);
             }
         }
+
+        out.functions.append(&mut self.lifted_functions);
 
         out
     }
@@ -466,6 +472,7 @@ impl IrLowerer {
                 .copied()
                 .map(Operand::Local)
                 .or_else(|| self.globals.get(name).map(|(id, _)| Operand::Global(*id)))
+                .or_else(|| self.function_value(func, lowering.current_block, name))
                 .or_else(|| {
                     self.unsupported(format!("reference to unresolved identifier `{name}`"));
                     None
@@ -575,6 +582,11 @@ impl IrLowerer {
                 );
                 Some(Operand::Temp(dst))
             }
+            Expr::FnLit {
+                params,
+                return_type,
+                body,
+            } => self.compile_fn_lit(func, lowering.current_block, params, return_type, body),
             Expr::Index { base, index } => {
                 let array = self.compile_expr(func, lowering, base)?;
                 let index = self.compile_expr(func, lowering, index)?;
@@ -940,6 +952,104 @@ impl IrLowerer {
 
     fn unsupported(&mut self, message: impl Into<String>) {
         self.diags.error(message, Span::default());
+    }
+
+    fn function_value(
+        &mut self,
+        func: &mut crate::ir::IrFunction,
+        block: BlockId,
+        name: &str,
+    ) -> Option<Operand> {
+        let (function, ret_ty) = self.functions.get(name).cloned()?;
+        let dst = self.builder.push_temp(
+            func,
+            IrType::Fn {
+                params: Vec::new(),
+                ret: Box::new(ret_ty),
+            },
+        );
+        self.builder
+            .push_instr(func, block, Instr::MakeClosure { dst, function });
+        Some(Operand::Temp(dst))
+    }
+
+    fn compile_fn_lit(
+        &mut self,
+        outer_func: &mut crate::ir::IrFunction,
+        block: BlockId,
+        params: &[crate::ast::Param],
+        return_type: &crate::ast::TypeName,
+        body: &[Stmt],
+    ) -> Option<Operand> {
+        self.fn_lit_counter += 1;
+        let name = format!("__fn_lit_{}", self.fn_lit_counter);
+        let ret_ty = IrType::from(&TypeInfo::from_ast(return_type));
+        let function_id = crate::ir::FunctionId(self.functions.len() + self.lifted_functions.len());
+        self.functions
+            .insert(name.clone(), (function_id, ret_ty.clone()));
+
+        let mut lifted = self.builder.begin_function(name, ret_ty.clone());
+        lifted.id = function_id;
+        let mut lowering = FunctionLowering {
+            current_block: lifted.entry,
+            locals: HashMap::new(),
+            scratch_counter: 0,
+        };
+        let mut param_types = Vec::with_capacity(params.len());
+        for param in params {
+            let ty_info = TypeInfo::from_ast(&param.ty);
+            let ir_ty = IrType::from(&ty_info);
+            param_types.push(ir_ty.clone());
+            self.builder
+                .push_param(&mut lifted, param.name.clone(), ir_ty.clone());
+            let local = self
+                .builder
+                .push_local(&mut lifted, param.name.clone(), ir_ty);
+            lowering.locals.insert(param.name.clone(), local);
+        }
+        for stmt in body {
+            if !self.compile_stmt(&mut lifted, &mut lowering, stmt) {
+                return None;
+            }
+        }
+        if matches!(
+            lifted
+                .blocks
+                .iter()
+                .find(|block| block.id == lowering.current_block)
+                .map(|block| &block.terminator),
+            Some(Terminator::Unreachable)
+        ) {
+            let terminator = if ret_ty.is_void() {
+                Terminator::Return(None)
+            } else {
+                self.diags.error(
+                    "IR lowering currently requires explicit return in non-void function literal",
+                    Span::default(),
+                );
+                return None;
+            };
+            self.builder
+                .set_terminator(&mut lifted, lowering.current_block, terminator);
+        }
+        self.lifted_functions.push(lifted);
+
+        let dst = self.builder.push_temp(
+            outer_func,
+            IrType::Fn {
+                params: param_types,
+                ret: Box::new(ret_ty),
+            },
+        );
+        self.builder.push_instr(
+            outer_func,
+            block,
+            Instr::MakeClosure {
+                dst,
+                function: function_id,
+            },
+        );
+        Some(Operand::Temp(dst))
     }
 }
 
