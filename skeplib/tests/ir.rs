@@ -91,3 +91,20 @@ fn main() -> Int {
     assert!(printed.contains("StructSet"));
     assert!(printed.contains("StructGet"));
 }
+
+#[test]
+fn lower_short_circuit_bool_ops_to_ir() {
+    let source = r#"
+fn main() -> Bool {
+  let a = true;
+  let b = false;
+  return (a && b) || a;
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let printed = PrettyIr::new(&program).to_string();
+    assert!(printed.contains("sc_rhs"));
+    assert!(printed.contains("sc_short"));
+    assert!(printed.contains("Branch"));
+}

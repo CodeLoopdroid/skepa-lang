@@ -4,9 +4,11 @@ use crate::ir::{IrFunction, IrProgram, Operand, Terminator};
 pub enum IrVerifyError {
     MissingEntryBlock { function: String },
     MissingTerminator { function: String, block: String },
+    UnknownBlockTarget { function: String, block: String },
     UnknownTemp { function: String },
     UnknownLocal { function: String },
     UnknownGlobal,
+    UnknownModuleInitFunction,
 }
 
 pub struct IrVerifier;
@@ -15,6 +17,14 @@ impl IrVerifier {
     pub fn verify_program(program: &IrProgram) -> Result<(), IrVerifyError> {
         for func in &program.functions {
             Self::verify_function(program, func)?;
+        }
+        if let Some(init) = &program.module_init
+            && !program
+                .functions
+                .iter()
+                .any(|func| func.id == init.function)
+        {
+            return Err(IrVerifyError::UnknownModuleInitFunction);
         }
         Ok(())
     }
@@ -117,9 +127,14 @@ impl IrVerifier {
             }
 
             match &block.terminator {
-                Terminator::Jump(_) | Terminator::Panic { .. } | Terminator::Unreachable => {}
+                Terminator::Jump(target) => {
+                    Self::verify_block_target(func, block.name.as_str(), *target)?;
+                }
+                Terminator::Panic { .. } | Terminator::Unreachable => {}
                 Terminator::Branch(branch) => {
                     Self::verify_operand(program, func, &branch.cond)?;
+                    Self::verify_block_target(func, block.name.as_str(), branch.then_block)?;
+                    Self::verify_block_target(func, block.name.as_str(), branch.else_block)?;
                 }
                 Terminator::Return(value) => {
                     if let Some(value) = value {
@@ -163,6 +178,21 @@ impl IrVerifier {
                     Err(IrVerifyError::UnknownGlobal)
                 }
             }
+        }
+    }
+
+    fn verify_block_target(
+        func: &IrFunction,
+        block: &str,
+        target: crate::ir::BlockId,
+    ) -> Result<(), IrVerifyError> {
+        if func.blocks.iter().any(|candidate| candidate.id == target) {
+            Ok(())
+        } else {
+            Err(IrVerifyError::UnknownBlockTarget {
+                function: func.name.clone(),
+                block: block.to_string(),
+            })
         }
     }
 }

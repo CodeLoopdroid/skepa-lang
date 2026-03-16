@@ -48,6 +48,7 @@ struct IrLowerer {
 struct FunctionLowering {
     current_block: BlockId,
     locals: HashMap<String, crate::ir::LocalId>,
+    scratch_counter: usize,
 }
 
 impl IrLowerer {
@@ -145,6 +146,7 @@ impl IrLowerer {
         let mut lowering = FunctionLowering {
             current_block: out.entry,
             locals: HashMap::new(),
+            scratch_counter: 0,
         };
 
         for param in &func.params {
@@ -197,6 +199,7 @@ impl IrLowerer {
         let mut lowering = FunctionLowering {
             current_block: func.entry,
             locals: HashMap::new(),
+            scratch_counter: 0,
         };
 
         for global in &program.globals {
@@ -615,6 +618,9 @@ impl IrLowerer {
                 Some(Operand::Temp(dst))
             }
             Expr::Binary { left, op, right } => {
+                if matches!(op, AstBinaryOp::AndAnd | AstBinaryOp::OrOr) {
+                    return self.compile_short_circuit(func, lowering, left, op, right);
+                }
                 let left = self.compile_expr(func, lowering, left)?;
                 let right = self.compile_expr(func, lowering, right)?;
                 let ty = self.infer_binary_type(func, &left, op, &right);
@@ -654,6 +660,72 @@ impl IrLowerer {
                 None
             }
         }
+    }
+
+    fn compile_short_circuit(
+        &mut self,
+        func: &mut crate::ir::IrFunction,
+        lowering: &mut FunctionLowering,
+        left: &Expr,
+        op: &AstBinaryOp,
+        right: &Expr,
+    ) -> Option<Operand> {
+        let left_value = self.compile_expr(func, lowering, left)?;
+        let result_local = self.builder.push_local(
+            func,
+            format!("__sc{}", lowering.scratch_counter),
+            IrType::Bool,
+        );
+        lowering.scratch_counter += 1;
+
+        let rhs_block = self.builder.push_block(func, "sc_rhs");
+        let short_block = self.builder.push_block(func, "sc_short");
+        let join_block = self.builder.push_block(func, "sc_join");
+
+        let (then_block, else_block, short_value) = match op {
+            AstBinaryOp::AndAnd => (rhs_block, short_block, false),
+            AstBinaryOp::OrOr => (short_block, rhs_block, true),
+            _ => return None,
+        };
+
+        self.builder.set_terminator(
+            func,
+            lowering.current_block,
+            Terminator::Branch(BranchTerminator {
+                cond: left_value,
+                then_block,
+                else_block,
+            }),
+        );
+
+        self.builder.push_instr(
+            func,
+            short_block,
+            Instr::StoreLocal {
+                local: result_local,
+                ty: IrType::Bool,
+                value: Operand::Const(ConstValue::Bool(short_value)),
+            },
+        );
+        self.builder
+            .set_terminator(func, short_block, Terminator::Jump(join_block));
+
+        lowering.current_block = rhs_block;
+        let right_value = self.compile_expr(func, lowering, right)?;
+        self.builder.push_instr(
+            func,
+            rhs_block,
+            Instr::StoreLocal {
+                local: result_local,
+                ty: IrType::Bool,
+                value: right_value,
+            },
+        );
+        self.builder
+            .set_terminator(func, rhs_block, Terminator::Jump(join_block));
+
+        lowering.current_block = join_block;
+        Some(Operand::Local(result_local))
     }
 
     fn infer_operand_type(&self, func: &crate::ir::IrFunction, operand: &Operand) -> IrType {
