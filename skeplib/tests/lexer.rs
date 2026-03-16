@@ -150,7 +150,10 @@ fn ignores_block_comment_with_punctuation_and_keywords_inside() {
     let (tokens, diags) = lex("/* if else == [] {} // not real */ return;");
     assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
     let got: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
-    assert_eq!(got, vec![TokenKind::KwReturn, TokenKind::Semi, TokenKind::Eof]);
+    assert_eq!(
+        got,
+        vec![TokenKind::KwReturn, TokenKind::Semi, TokenKind::Eof]
+    );
 }
 
 #[test]
