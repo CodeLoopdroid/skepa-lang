@@ -2,11 +2,12 @@ use crate::codegen::CodegenError;
 use crate::codegen::llvm::types::llvm_ty;
 use crate::codegen::llvm::value::{ValueNames, llvm_symbol, operand_load};
 use crate::ir::{Instr, IrFunction, IrProgram, IrType, Operand, TempId};
+use std::collections::HashMap;
 
 pub fn ensure_supported(instr: &Instr) -> Result<(), CodegenError> {
     match instr {
-        Instr::CallIndirect { .. } | Instr::CallBuiltin { .. } => Err(CodegenError::Unsupported(
-            "indirect and builtin calls are not lowered yet",
+        Instr::CallIndirect { .. } => Err(CodegenError::Unsupported(
+            "indirect calls are not lowered yet",
         )),
         _ => Ok(()),
     }
@@ -26,6 +27,7 @@ pub fn emit_direct_call(
     call: DirectCall<'_>,
     lines: &mut Vec<String>,
     counter: &mut usize,
+    string_literals: &HashMap<String, String>,
 ) -> Result<(), CodegenError> {
     let callee = program
         .functions
@@ -42,7 +44,7 @@ pub fn emit_direct_call(
 
     let mut lowered_args = Vec::with_capacity(call.args.len());
     for (arg, param) in call.args.iter().zip(&callee.params) {
-        let value = operand_load(names, arg, func, lines, counter, &param.ty)?;
+        let value = operand_load(names, arg, func, lines, counter, &param.ty, string_literals)?;
         lowered_args.push(format!("{} {value}", llvm_ty(&param.ty)?));
     }
     let joined_args = lowered_args.join(", ");

@@ -5,9 +5,10 @@ pub fn llvm_ty(ty: &IrType) -> Result<&'static str, CodegenError> {
     match ty {
         IrType::Int => Ok("i64"),
         IrType::Bool => Ok("i1"),
+        IrType::String => Ok("ptr"),
         IrType::Void => Ok("void"),
         _ => Err(CodegenError::Unsupported(
-            "only Int/Bool/Void lowering is implemented",
+            "only Int/Bool/String/Void lowering is implemented",
         )),
     }
 }

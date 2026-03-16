@@ -100,6 +100,88 @@ fn main() -> Int {
 }
 
 #[test]
+fn llvm_codegen_emits_valid_string_calls_and_constants() {
+    let source = r#"
+fn greet() -> String {
+  return "hello";
+}
+
+fn main() -> String {
+  return greet();
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let llvm_ir =
+        codegen::compile_program_to_llvm_ir(&program).expect("LLVM lowering should succeed");
+
+    assert!(llvm_ir.contains("declare ptr @skp_rt_string_from_utf8(ptr, i64)"));
+    assert!(llvm_ir.contains("define ptr @\"greet\"()"));
+    assert!(llvm_ir.contains("call ptr @skp_rt_string_from_utf8"));
+    assert!(llvm_ir.contains("define ptr @\"main\"()"));
+
+    let ll_path = temp_file("string_call", "ll");
+    let bc_path = temp_file("string_call", "bc");
+    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
+
+    let output = Command::new("llvm-as")
+        .arg(&ll_path)
+        .arg("-o")
+        .arg(&bc_path)
+        .output()
+        .expect("llvm-as should be available on PATH");
+
+    let _ = fs::remove_file(&ll_path);
+    let _ = fs::remove_file(&bc_path);
+
+    assert!(
+        output.status.success(),
+        "llvm-as rejected generated IR: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn llvm_codegen_emits_str_builtin_runtime_calls() {
+    let source = r#"
+import str;
+
+fn main() -> Int {
+  return str.len("hello") + str.indexOf("skepa", "epa");
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let llvm_ir =
+        codegen::compile_program_to_llvm_ir(&program).expect("LLVM lowering should succeed");
+
+    assert!(llvm_ir.contains("declare i64 @skp_rt_builtin_str_len(ptr)"));
+    assert!(llvm_ir.contains("declare i64 @skp_rt_builtin_str_index_of(ptr, ptr)"));
+    assert!(llvm_ir.contains("call i64 @skp_rt_builtin_str_len(ptr"));
+    assert!(llvm_ir.contains("call i64 @skp_rt_builtin_str_index_of(ptr"));
+
+    let ll_path = temp_file("str_builtin", "ll");
+    let bc_path = temp_file("str_builtin", "bc");
+    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
+
+    let output = Command::new("llvm-as")
+        .arg(&ll_path)
+        .arg("-o")
+        .arg(&bc_path)
+        .output()
+        .expect("llvm-as should be available on PATH");
+
+    let _ = fs::remove_file(&ll_path);
+    let _ = fs::remove_file(&bc_path);
+
+    assert!(
+        output.status.success(),
+        "llvm-as rejected generated IR: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn llvm_codegen_emits_project_entry_wrapper_calls() {
     let dir = temp_file("project_codegen", "dir");
     fs::create_dir_all(&dir).expect("temporary project dir should be created");

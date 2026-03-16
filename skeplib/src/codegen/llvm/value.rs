@@ -43,7 +43,7 @@ pub fn operand_value(
         Operand::Local(id) => Ok(format!("%local{}", id.0)),
         Operand::Global(id) => Ok(format!("@g{}", id.0)),
         Operand::Const(_) => Err(CodegenError::Unsupported(
-            "only Int and Bool constants are supported in initial LLVM lowering",
+            "string constants require operand_load in LLVM lowering",
         )),
     }
 }
@@ -55,8 +55,27 @@ pub fn operand_load(
     lines: &mut Vec<String>,
     counter: &mut usize,
     expected_ty: &crate::ir::IrType,
+    string_literals: &HashMap<String, String>,
 ) -> Result<String, CodegenError> {
     match operand {
+        Operand::Const(ConstValue::String(value)) => {
+            let name = string_literals.get(value).ok_or_else(|| {
+                CodegenError::InvalidIr("missing string literal declaration".into())
+            })?;
+            let gep = format!("%v{counter}");
+            *counter += 1;
+            let bytes = value.len() + 1;
+            lines.push(format!(
+                "  {gep} = getelementptr inbounds [{bytes} x i8], ptr {name}, i64 0, i64 0"
+            ));
+            let string = format!("%v{counter}");
+            *counter += 1;
+            lines.push(format!(
+                "  {string} = call ptr @skp_rt_string_from_utf8(ptr {gep}, i64 {})",
+                value.len()
+            ));
+            Ok(string)
+        }
         Operand::Local(id) => {
             let name = format!("%v{counter}");
             *counter += 1;

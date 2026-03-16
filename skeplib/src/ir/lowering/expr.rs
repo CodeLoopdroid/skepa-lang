@@ -483,13 +483,20 @@ impl IrLowerer {
                         return OkOperand::from_call_result(dst);
                     }
                     if !is_value_receiver {
-                        let dst = self.builder.push_temp(func, IrType::Unknown);
+                        let ret_ty = self
+                            .builtin_return_type(package, field)
+                            .unwrap_or(IrType::Unknown);
+                        let dst = if ret_ty.is_void() {
+                            None
+                        } else {
+                            Some(self.builder.push_temp(func, ret_ty.clone()))
+                        };
                         self.builder.push_instr(
                             func,
                             lowering.current_block,
                             Instr::CallBuiltin {
-                                dst: Some(dst),
-                                ret_ty: IrType::Unknown,
+                                dst,
+                                ret_ty: ret_ty.clone(),
                                 builtin: crate::ir::BuiltinCall {
                                     package: package.clone(),
                                     name: field.clone(),
@@ -497,7 +504,7 @@ impl IrLowerer {
                                 args: lowered_args,
                             },
                         );
-                        return Some(Operand::Temp(dst));
+                        return OkOperand::from_call_result(dst);
                     }
                 }
                 self.compile_method_call(func, lowering, base, field, lowered_args)
@@ -722,6 +729,19 @@ impl IrLowerer {
             } else {
                 IrType::Unknown
             }
+        }
+    }
+
+    fn builtin_return_type(&self, package: &str, name: &str) -> Option<IrType> {
+        match (package, name) {
+            ("str", "len") => Some(IrType::Int),
+            ("str", "contains") => Some(IrType::Bool),
+            ("str", "indexOf") => Some(IrType::Int),
+            ("str", "slice") => Some(IrType::String),
+            ("io", "print" | "println" | "printf") => Some(IrType::Void),
+            ("io", "format") => Some(IrType::String),
+            ("io", "readLine") => Some(IrType::String),
+            _ => None,
         }
     }
 

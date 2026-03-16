@@ -7,14 +7,19 @@ use crate::codegen::llvm::value::{ValueNames, llvm_symbol, operand_load};
 use crate::ir::{
     BinaryOp, CmpOp, ConstValue, Instr, IrFunction, IrProgram, Operand, Terminator, UnaryOp,
 };
+use std::collections::HashMap;
 
 pub struct LlvmEmitter<'a> {
     program: &'a IrProgram,
+    string_literals: HashMap<String, String>,
 }
 
 impl<'a> LlvmEmitter<'a> {
     pub fn new(program: &'a IrProgram) -> Self {
-        Self { program }
+        Self {
+            program,
+            string_literals: collect_string_literals(program),
+        }
     }
 
     pub fn emit_program(&self) -> Result<String, CodegenError> {
@@ -61,6 +66,18 @@ impl<'a> LlvmEmitter<'a> {
             out.push(String::new());
         }
 
+        if !self.string_literals.is_empty() {
+            for (value, name) in &self.string_literals {
+                let bytes = encode_c_string(value);
+                out.push(format!(
+                    "{name} = private unnamed_addr constant [{} x i8] c\"{}\", align 1",
+                    value.len() + 1,
+                    bytes
+                ));
+            }
+            out.push(String::new());
+        }
+
         if let Some(module_init) = &self.program.module_init {
             let init = self
                 .program
@@ -77,6 +94,11 @@ impl<'a> LlvmEmitter<'a> {
                 "@llvm.global_ctors = appending global [1 x {{ i32, ptr, ptr }}] [{{ i32, ptr, ptr }} {{ i32 65535, ptr {}, ptr null }}]",
                 llvm_symbol(&init.name)
             ));
+            out.push(String::new());
+        }
+
+        runtime::emit_runtime_decls(self.program, &mut out);
+        if needs_runtime_decls(self.program) {
             out.push(String::new());
         }
 
@@ -157,17 +179,34 @@ impl<'a> LlvmEmitter<'a> {
                         let int = if *v { 1 } else { 0 };
                         lines.push(format!("  {dest} = add {} 0, {int}", llvm_ty(ty)?));
                     }
+                    ConstValue::String(_) => {
+                        let value = operand_load(
+                            names,
+                            &Operand::Const(value.clone()),
+                            func,
+                            lines,
+                            counter,
+                            ty,
+                            &self.string_literals,
+                        )?;
+                        lines.push(format!("  {dest} = bitcast ptr {value} to ptr"));
+                    }
                     _ => {
                         return Err(CodegenError::Unsupported(
-                            "only Int/Bool constants are supported",
+                            "only Int/Bool/String constants are supported",
                         ));
                     }
                 }
             }
             Instr::Copy { dst, ty, src } => {
                 let dest = names.temp(*dst)?;
-                let value = operand_load(names, src, func, lines, counter, ty)?;
-                lines.push(format!("  {dest} = add {} 0, {value}", llvm_ty(ty)?));
+                let value =
+                    operand_load(names, src, func, lines, counter, ty, &self.string_literals)?;
+                if matches!(ty, crate::ir::IrType::String) {
+                    lines.push(format!("  {dest} = bitcast ptr {value} to ptr"));
+                } else {
+                    lines.push(format!("  {dest} = add {} 0, {value}", llvm_ty(ty)?));
+                }
             }
             Instr::Unary {
                 dst,
@@ -176,7 +215,15 @@ impl<'a> LlvmEmitter<'a> {
                 operand,
             } => {
                 let dest = names.temp(*dst)?;
-                let value = operand_load(names, operand, func, lines, counter, ty)?;
+                let value = operand_load(
+                    names,
+                    operand,
+                    func,
+                    lines,
+                    counter,
+                    ty,
+                    &self.string_literals,
+                )?;
                 match (op, ty) {
                     (UnaryOp::Neg, crate::ir::IrType::Int) => {
                         lines.push(format!("  {dest} = sub i64 0, {value}"));
@@ -199,8 +246,17 @@ impl<'a> LlvmEmitter<'a> {
                 right,
             } => {
                 let dest = names.temp(*dst)?;
-                let left = operand_load(names, left, func, lines, counter, ty)?;
-                let right = operand_load(names, right, func, lines, counter, ty)?;
+                let left =
+                    operand_load(names, left, func, lines, counter, ty, &self.string_literals)?;
+                let right = operand_load(
+                    names,
+                    right,
+                    func,
+                    lines,
+                    counter,
+                    ty,
+                    &self.string_literals,
+                )?;
                 let opname = match op {
                     BinaryOp::Add => "add",
                     BinaryOp::Sub => "sub",
@@ -220,10 +276,24 @@ impl<'a> LlvmEmitter<'a> {
                 right,
             } => {
                 let dest = names.temp(*dst)?;
-                let left =
-                    operand_load(names, left, func, lines, counter, &crate::ir::IrType::Int)?;
-                let right =
-                    operand_load(names, right, func, lines, counter, &crate::ir::IrType::Int)?;
+                let left = operand_load(
+                    names,
+                    left,
+                    func,
+                    lines,
+                    counter,
+                    &crate::ir::IrType::Int,
+                    &self.string_literals,
+                )?;
+                let right = operand_load(
+                    names,
+                    right,
+                    func,
+                    lines,
+                    counter,
+                    &crate::ir::IrType::Int,
+                    &self.string_literals,
+                )?;
                 let pred = match op {
                     CmpOp::Eq => "eq",
                     CmpOp::Ne => "ne",
@@ -243,7 +313,15 @@ impl<'a> LlvmEmitter<'a> {
                 ));
             }
             Instr::StoreGlobal { global, ty, value } => {
-                let value = operand_load(names, value, func, lines, counter, ty)?;
+                let value = operand_load(
+                    names,
+                    value,
+                    func,
+                    lines,
+                    counter,
+                    ty,
+                    &self.string_literals,
+                )?;
                 lines.push(format!(
                     "  store {} {value}, ptr @g{}, align 8",
                     llvm_ty(ty)?,
@@ -259,7 +337,15 @@ impl<'a> LlvmEmitter<'a> {
                 ));
             }
             Instr::StoreLocal { local, ty, value } => {
-                let value = operand_load(names, value, func, lines, counter, ty)?;
+                let value = operand_load(
+                    names,
+                    value,
+                    func,
+                    lines,
+                    counter,
+                    ty,
+                    &self.string_literals,
+                )?;
                 lines.push(format!(
                     "  store {} {value}, ptr %local{}, align 8",
                     llvm_ty(ty)?,
@@ -289,6 +375,27 @@ impl<'a> LlvmEmitter<'a> {
                     },
                     lines,
                     counter,
+                    &self.string_literals,
+                )?;
+            }
+            Instr::CallBuiltin {
+                dst,
+                ret_ty,
+                builtin,
+                args,
+            } => {
+                runtime::emit_builtin_call(
+                    func,
+                    names,
+                    runtime::BuiltinCallInstr {
+                        dst: *dst,
+                        ret_ty,
+                        builtin,
+                        args,
+                    },
+                    lines,
+                    counter,
+                    &self.string_literals,
                 )?;
             }
             _ => {
@@ -321,6 +428,7 @@ impl<'a> LlvmEmitter<'a> {
                     lines,
                     counter,
                     &crate::ir::IrType::Bool,
+                    &self.string_literals,
                 )?;
                 let (then_label, else_label) =
                     branch_targets(branch, |block| self.block_label(func, block))?;
@@ -329,7 +437,15 @@ impl<'a> LlvmEmitter<'a> {
                 ));
             }
             Terminator::Return(Some(value)) => {
-                let value = operand_load(names, value, func, lines, counter, &func.ret_ty)?;
+                let value = operand_load(
+                    names,
+                    value,
+                    func,
+                    lines,
+                    counter,
+                    &func.ret_ty,
+                    &self.string_literals,
+                )?;
                 lines.push(format!("  ret {} {value}", llvm_ty(&func.ret_ty)?));
             }
             Terminator::Return(None) => lines.push("  ret void".into()),
@@ -355,4 +471,97 @@ impl<'a> LlvmEmitter<'a> {
             .ok_or_else(|| CodegenError::MissingBlock(format!("{:?}", id)))?;
         Ok(label(block))
     }
+}
+
+fn collect_string_literals(program: &IrProgram) -> HashMap<String, String> {
+    let mut literals = HashMap::new();
+    let mut index = 0usize;
+    for func in &program.functions {
+        for block in &func.blocks {
+            for instr in &block.instrs {
+                collect_instr_string_literals(instr, &mut literals, &mut index);
+            }
+            if let Terminator::Return(Some(Operand::Const(ConstValue::String(value)))) =
+                &block.terminator
+            {
+                literals.entry(value.clone()).or_insert_with(|| {
+                    let name = format!("@.str.{index}");
+                    index += 1;
+                    name
+                });
+            }
+        }
+    }
+    literals
+}
+
+fn collect_instr_string_literals(
+    instr: &Instr,
+    literals: &mut HashMap<String, String>,
+    index: &mut usize,
+) {
+    let mut add_operand = |operand: &Operand| {
+        if let Operand::Const(ConstValue::String(value)) = operand {
+            literals.entry(value.clone()).or_insert_with(|| {
+                let name = format!("@.str.{index}");
+                *index += 1;
+                name
+            });
+        }
+    };
+    match instr {
+        Instr::Const {
+            value: ConstValue::String(value),
+            ..
+        } => {
+            literals.entry(value.clone()).or_insert_with(|| {
+                let name = format!("@.str.{index}");
+                *index += 1;
+                name
+            });
+        }
+        Instr::Copy { src, .. } => add_operand(src),
+        Instr::Unary { operand, .. } => add_operand(operand),
+        Instr::Binary { left, right, .. } | Instr::Compare { left, right, .. } => {
+            add_operand(left);
+            add_operand(right);
+        }
+        Instr::StoreGlobal { value, .. } | Instr::StoreLocal { value, .. } => add_operand(value),
+        Instr::CallDirect { args, .. } | Instr::CallBuiltin { args, .. } => {
+            for arg in args {
+                add_operand(arg);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn encode_c_string(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'\\' => out.push_str("\\5C"),
+            b'"' => out.push_str("\\22"),
+            32..=126 => out.push(byte as char),
+            _ => out.push_str(&format!("\\{:02X}", byte)),
+        }
+    }
+    out.push_str("\\00");
+    out
+}
+
+fn needs_runtime_decls(program: &IrProgram) -> bool {
+    runtime_needed(program)
+}
+
+fn runtime_needed(program: &IrProgram) -> bool {
+    !collect_string_literals(program).is_empty()
+        || program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block
+                    .instrs
+                    .iter()
+                    .any(|instr| matches!(instr, Instr::CallBuiltin { .. }))
+            })
+        })
 }
