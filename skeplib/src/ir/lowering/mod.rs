@@ -238,6 +238,9 @@ impl IrLowerer {
     ) -> bool {
         match stmt {
             Stmt::Let { name, ty, value } => {
+                if let Some(done) = self.try_compile_vec_new_let(func, lowering, name, ty, value) {
+                    return done;
+                }
                 let rhs = match self.compile_expr(func, lowering, value) {
                     Some(value) => value,
                     None => return false,
@@ -854,6 +857,14 @@ impl IrLowerer {
                     self.unsupported("field-style call is not in the initial IR lowering subset");
                     return None;
                 };
+                if package == "vec" {
+                    return self.compile_vec_call(
+                        func,
+                        lowering.current_block,
+                        field,
+                        lowered_args,
+                    );
+                }
                 let dst = self.builder.push_temp(func, IrType::Unknown);
                 self.builder.push_instr(
                     func,
@@ -884,6 +895,148 @@ impl IrLowerer {
                     },
                 );
                 Some(Operand::Temp(dst))
+            }
+        }
+    }
+
+    fn try_compile_vec_new_let(
+        &mut self,
+        func: &mut crate::ir::IrFunction,
+        lowering: &mut FunctionLowering,
+        name: &str,
+        ty: &Option<crate::ast::TypeName>,
+        value: &Expr,
+    ) -> Option<bool> {
+        let Some(crate::ast::TypeName::Vec { elem }) = ty else {
+            return None;
+        };
+        let Expr::Call { callee, args } = value else {
+            return None;
+        };
+        if !args.is_empty()
+            || !matches!(&**callee, Expr::Field { base, field } if field == "new" && matches!(&**base, Expr::Ident(pkg) if pkg == "vec"))
+        {
+            return None;
+        }
+
+        let elem_ty = IrType::from(&TypeInfo::from_ast(elem));
+        let local_ty = IrType::Vec {
+            elem: Box::new(elem_ty.clone()),
+        };
+        let local = self
+            .builder
+            .push_local(func, name.to_string(), local_ty.clone());
+        lowering.locals.insert(name.to_string(), local);
+        let dst = self.builder.push_temp(func, local_ty.clone());
+        self.builder
+            .push_instr(func, lowering.current_block, Instr::VecNew { dst, elem_ty });
+        self.builder.push_instr(
+            func,
+            lowering.current_block,
+            Instr::StoreLocal {
+                local,
+                ty: local_ty,
+                value: Operand::Temp(dst),
+            },
+        );
+        Some(true)
+    }
+
+    fn compile_vec_call(
+        &mut self,
+        func: &mut crate::ir::IrFunction,
+        block: BlockId,
+        field: &str,
+        args: Vec<Operand>,
+    ) -> Option<Operand> {
+        match (field, args.as_slice()) {
+            ("new", []) => {
+                let dst = self.builder.push_temp(
+                    func,
+                    IrType::Vec {
+                        elem: Box::new(IrType::Unknown),
+                    },
+                );
+                self.builder.push_instr(
+                    func,
+                    block,
+                    Instr::VecNew {
+                        dst,
+                        elem_ty: IrType::Unknown,
+                    },
+                );
+                Some(Operand::Temp(dst))
+            }
+            ("len", [vec]) => {
+                let dst = self.builder.push_temp(func, IrType::Int);
+                self.builder.push_instr(
+                    func,
+                    block,
+                    Instr::VecLen {
+                        dst,
+                        vec: vec.clone(),
+                    },
+                );
+                Some(Operand::Temp(dst))
+            }
+            ("push", [vec, value]) => {
+                self.builder.push_instr(
+                    func,
+                    block,
+                    Instr::VecPush {
+                        vec: vec.clone(),
+                        value: value.clone(),
+                    },
+                );
+                Some(Operand::Const(ConstValue::Unit))
+            }
+            ("get", [vec, index]) => {
+                let elem_ty = self.array_element_type(func, vec);
+                let dst = self.builder.push_temp(func, elem_ty.clone());
+                self.builder.push_instr(
+                    func,
+                    block,
+                    Instr::VecGet {
+                        dst,
+                        elem_ty,
+                        vec: vec.clone(),
+                        index: index.clone(),
+                    },
+                );
+                Some(Operand::Temp(dst))
+            }
+            ("set", [vec, index, value]) => {
+                let elem_ty = self.array_element_type(func, vec);
+                self.builder.push_instr(
+                    func,
+                    block,
+                    Instr::VecSet {
+                        elem_ty,
+                        vec: vec.clone(),
+                        index: index.clone(),
+                        value: value.clone(),
+                    },
+                );
+                Some(Operand::Const(ConstValue::Unit))
+            }
+            ("delete", [vec, index]) => {
+                let elem_ty = self.array_element_type(func, vec);
+                let dst = self.builder.push_temp(func, elem_ty.clone());
+                self.builder.push_instr(
+                    func,
+                    block,
+                    Instr::VecDelete {
+                        dst,
+                        elem_ty,
+                        vec: vec.clone(),
+                        index: index.clone(),
+                    },
+                );
+                Some(Operand::Temp(dst))
+            }
+            _ => {
+                self.unsupported(format!("vec.{field} is not supported in IR lowering"));
+                None
             }
         }
     }

@@ -150,3 +150,27 @@ fn main() -> Int {
     assert!(printed.contains("MakeClosure"));
     assert!(printed.contains("CallIndirect"));
 }
+
+#[test]
+fn lower_vec_ops_to_ir() {
+    let source = r#"
+fn main() -> Int {
+  let xs: Vec[Int] = vec.new();
+  vec.push(xs, 10);
+  vec.push(xs, 20);
+  vec.set(xs, 1, 30);
+  let first = vec.get(xs, 0);
+  let removed = vec.delete(xs, 1);
+  return first + removed + vec.len(xs);
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let printed = PrettyIr::new(&program).to_string();
+    assert!(printed.contains("VecNew"));
+    assert!(printed.contains("VecPush"));
+    assert!(printed.contains("VecSet"));
+    assert!(printed.contains("VecGet"));
+    assert!(printed.contains("VecDelete"));
+    assert!(printed.contains("VecLen"));
+}

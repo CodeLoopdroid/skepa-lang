@@ -111,6 +111,14 @@ pub enum Instr {
         value: Operand,
         size: usize,
     },
+    VecNew {
+        dst: TempId,
+        elem_ty: IrType,
+    },
+    VecLen {
+        dst: TempId,
+        vec: Operand,
+    },
     ArrayGet {
         dst: TempId,
         elem_ty: IrType,
@@ -138,6 +146,12 @@ pub enum Instr {
         vec: Operand,
         index: Operand,
         value: Operand,
+    },
+    VecDelete {
+        dst: TempId,
+        elem_ty: IrType,
+        vec: Operand,
+        index: Operand,
     },
     MakeStruct {
         dst: TempId,

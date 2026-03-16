@@ -72,6 +72,9 @@ impl IrVerifier {
                     crate::ir::Instr::MakeArrayRepeat { value, .. } => {
                         Self::verify_operand(program, func, value)?;
                     }
+                    crate::ir::Instr::VecLen { vec: array, .. } => {
+                        Self::verify_operand(program, func, array)?;
+                    }
                     crate::ir::Instr::ArrayGet { array, index, .. }
                     | crate::ir::Instr::VecGet {
                         vec: array, index, ..
@@ -94,6 +97,12 @@ impl IrVerifier {
                         Self::verify_operand(program, func, array)?;
                         Self::verify_operand(program, func, index)?;
                         Self::verify_operand(program, func, value)?;
+                    }
+                    crate::ir::Instr::VecDelete {
+                        vec: array, index, ..
+                    } => {
+                        Self::verify_operand(program, func, array)?;
+                        Self::verify_operand(program, func, index)?;
                     }
                     crate::ir::Instr::MakeStruct { fields, .. } => {
                         for field in fields {
@@ -122,6 +131,7 @@ impl IrVerifier {
                     crate::ir::Instr::Const { .. }
                     | crate::ir::Instr::LoadGlobal { .. }
                     | crate::ir::Instr::LoadLocal { .. }
+                    | crate::ir::Instr::VecNew { .. }
                     | crate::ir::Instr::MakeClosure { .. } => {}
                 }
             }
