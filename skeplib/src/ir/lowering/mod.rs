@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::ast::{FnDecl, MethodDecl, Program, StructDecl};
 use crate::diagnostic::{DiagnosticBag, Span};
-use crate::ir::{Instr, IrProgram, IrType, IrVerifier, Terminator};
+use crate::ir::{Instr, IrProgram, IrType, IrVerifier, Terminator, opt};
 use crate::parser::Parser;
 use crate::resolver::{ModuleGraph, SymbolKind};
 
@@ -22,7 +22,8 @@ pub fn compile_source(source: &str) -> Result<IrProgram, DiagnosticBag> {
     }
 
     let mut lowerer = IrLowerer::new();
-    let ir = lowerer.compile_program(&program);
+    let mut ir = lowerer.compile_program(&program);
+    opt::optimize_program(&mut ir);
     for diag in lowerer.diags.into_vec() {
         diags.push(diag);
     }

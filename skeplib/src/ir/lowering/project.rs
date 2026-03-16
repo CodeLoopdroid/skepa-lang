@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::ir::{Instr, IrProgram, IrType, IrVerifier, Operand, Terminator};
+use crate::ir::{Instr, IrProgram, IrType, IrVerifier, Operand, Terminator, opt};
 use crate::parser::Parser;
 use crate::resolver::{
     ModuleGraph, ResolveError, ResolveErrorKind, build_export_maps, resolve_project,
@@ -138,6 +138,7 @@ pub fn compile_project_graph(graph: &ModuleGraph, entry: &Path) -> Result<IrProg
     );
     out.functions.push(main);
     out.functions.append(&mut lowerer.lifted_functions);
+    opt::optimize_program(&mut out);
 
     IrVerifier::verify_program(&out).map_err(|err| format!("IR verification failed: {err:?}"))?;
     Ok(out)

@@ -124,6 +124,26 @@ fn add_loop(n: Int) -> Int {
 }
 
 #[test]
+fn compile_source_applies_constant_folding_and_branch_simplification() {
+    let source = r#"
+fn main() -> Int {
+  let x = 1 + 2;
+  if (true) {
+    return x;
+  }
+  return 99;
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let printed = PrettyIr::new(&program).to_string();
+    assert!(printed.contains("Const { dst: TempId("));
+    assert!(printed.contains("value: Int(3)"));
+    assert!(printed.contains("Jump(BlockId("));
+    assert!(!printed.contains("Branch(BranchTerminator"));
+}
+
+#[test]
 fn verifier_rejects_unknown_jump_target() {
     let func = IrFunction {
         id: FunctionId(0),

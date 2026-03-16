@@ -3,6 +3,7 @@ mod builder;
 mod instr;
 mod interp;
 pub mod lowering;
+pub mod opt;
 mod pretty;
 mod program;
 mod types;
