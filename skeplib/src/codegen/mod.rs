@@ -86,16 +86,20 @@ pub fn compile_program_to_object_file(
 pub fn compile_program_to_executable(program: &IrProgram, path: &Path) -> Result<(), CodegenError> {
     let obj_path = temp_codegen_path("module", object_extension());
     compile_program_to_object_file(program, &obj_path)?;
-    let result = run_tool(
+    let result = link_object_file_to_executable(&obj_path, path);
+    let _ = fs::remove_file(&obj_path);
+    result
+}
+
+pub fn link_object_file_to_executable(object_path: &Path, path: &Path) -> Result<(), CodegenError> {
+    run_tool(
         "clang",
         &[
-            obj_path.as_os_str().to_string_lossy().as_ref(),
+            object_path.as_os_str().to_string_lossy().as_ref(),
             "-o",
             path.as_os_str().to_string_lossy().as_ref(),
         ],
-    );
-    let _ = fs::remove_file(&obj_path);
-    result
+    )
 }
 
 fn run_tool(tool: &str, args: &[&str]) -> Result<(), CodegenError> {

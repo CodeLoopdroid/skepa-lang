@@ -13,17 +13,25 @@ mod stmt;
 
 use context::{FunctionLowering, IrLowerer};
 
-pub use project::{compile_project_entry, compile_project_graph};
+pub use project::{
+    compile_project_entry, compile_project_entry_unoptimized, compile_project_graph,
+    compile_project_graph_unoptimized,
+};
 
 pub fn compile_source(source: &str) -> Result<IrProgram, DiagnosticBag> {
+    let mut ir = compile_source_unoptimized(source)?;
+    opt::optimize_program(&mut ir);
+    Ok(ir)
+}
+
+pub fn compile_source_unoptimized(source: &str) -> Result<IrProgram, DiagnosticBag> {
     let (program, mut diags) = Parser::parse_source(source);
     if !diags.is_empty() {
         return Err(diags);
     }
 
     let mut lowerer = IrLowerer::new();
-    let mut ir = lowerer.compile_program(&program);
-    opt::optimize_program(&mut ir);
+    let ir = lowerer.compile_program(&program);
     for diag in lowerer.diags.into_vec() {
         diags.push(diag);
     }

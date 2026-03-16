@@ -6,14 +6,14 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use skeplib::bytecode::{BytecodeModule, compile_project_graph, compile_source};
+use skeplib::codegen;
 use skeplib::diagnostic::DiagnosticBag;
+use skeplib::ir;
 use skeplib::parser::Parser;
 use skeplib::resolver::resolve_project;
 use skeplib::sema::analyze_project_graph_phased;
-use skeplib::vm::Vm;
 
 use crate::baseline::{
     compare_results, default_baseline_path, load_baseline, print_compare_report,
@@ -198,44 +198,88 @@ fn benchmark_cases(
 ) -> Result<Vec<BenchCase>, String> {
     let workloads = workload_config(opts);
     let small_src = fs::read_to_string(&workspace.small_file).map_err(|err| err.to_string())?;
-    let medium_graph = resolve_project(&workspace.medium_entry).map_err(format_resolve_errors)?;
     let small_graph = resolve_project(&workspace.small_file).map_err(format_resolve_errors)?;
+    let medium_graph = resolve_project(&workspace.medium_entry).map_err(format_resolve_errors)?;
     let small_graph_for_sema = small_graph.clone();
-    let small_graph_for_codegen = small_graph.clone();
     let medium_graph_for_sema = medium_graph.clone();
-    let medium_graph_for_codegen = medium_graph.clone();
 
-    let loop_module =
-        compile_source(&src_loop_accumulate(workloads.loop_iterations)).map_err(format_diags)?;
-    let arith_module =
-        compile_source(&src_arith_workload(workloads.arith_iterations)).map_err(format_diags)?;
-    let arith_local_const_module = compile_source(&src_arith_local_const_workload(
-        workloads.arith_local_const_iterations,
-    ))
-    .map_err(format_diags)?;
-    let arith_local_local_module = compile_source(&src_arith_local_local_workload(
-        workloads.arith_local_local_iterations,
-    ))
-    .map_err(format_diags)?;
-    let arith_chain_module =
-        compile_source(&src_arith_chain_workload(workloads.arith_chain_iterations))
-            .map_err(format_diags)?;
-    let call_module = compile_source(&src_function_call_chain(workloads.call_iterations))
-        .map_err(format_diags)?;
-    let array_module =
-        compile_source(&src_array_workload(workloads.array_iterations)).map_err(format_diags)?;
-    let struct_module = compile_source(&src_struct_method_workload(workloads.struct_iterations))
-        .map_err(format_diags)?;
-    let struct_field_module = compile_source(&src_struct_field_workload(
-        workloads.struct_field_iterations,
-    ))
-    .map_err(format_diags)?;
-    let struct_complex_method_module = compile_source(&src_struct_complex_method_workload(
-        workloads.struct_complex_method_iterations,
-    ))
-    .map_err(format_diags)?;
-    let string_module =
-        compile_source(&src_string_workload(workloads.string_iterations)).map_err(format_diags)?;
+    let loop_src = src_loop_accumulate(workloads.loop_iterations);
+    let arith_src = src_arith_workload(workloads.arith_iterations);
+    let arith_local_const_src =
+        src_arith_local_const_workload(workloads.arith_local_const_iterations);
+    let arith_local_local_src =
+        src_arith_local_local_workload(workloads.arith_local_local_iterations);
+    let arith_chain_src = src_arith_chain_workload(workloads.arith_chain_iterations);
+    let call_src = src_function_call_chain(workloads.call_iterations);
+    let array_src = src_array_workload(workloads.array_iterations);
+    let struct_src = src_struct_method_workload(workloads.struct_iterations);
+    let struct_field_src = src_struct_field_workload(workloads.struct_field_iterations);
+    let struct_complex_src =
+        src_struct_complex_method_workload(workloads.struct_complex_method_iterations);
+    let string_src = src_string_workload(workloads.string_iterations);
+
+    let cli_tool = cli_tools(&opts.profile)?;
+    let native_exec_cases = if let Some(skepac) = &cli_tool {
+        vec![
+            native_exec_case(
+                "runtime_loop_heavy",
+                skepac.clone(),
+                write_temp_source(&loop_src)?,
+            ),
+            native_exec_case(
+                "runtime_arith_heavy",
+                skepac.clone(),
+                write_temp_source(&arith_src)?,
+            ),
+            native_exec_case(
+                "runtime_arith_local_const",
+                skepac.clone(),
+                write_temp_source(&arith_local_const_src)?,
+            ),
+            native_exec_case(
+                "runtime_arith_local_local",
+                skepac.clone(),
+                write_temp_source(&arith_local_local_src)?,
+            ),
+            native_exec_case(
+                "runtime_arith_chain",
+                skepac.clone(),
+                write_temp_source(&arith_chain_src)?,
+            ),
+            native_exec_case(
+                "runtime_call_heavy",
+                skepac.clone(),
+                write_temp_source(&call_src)?,
+            ),
+        ]
+    } else {
+        vec![
+            skipped_case(
+                "runtime_loop_heavy",
+                "missing skepac binary in selected profile",
+            ),
+            skipped_case(
+                "runtime_arith_heavy",
+                "missing skepac binary in selected profile",
+            ),
+            skipped_case(
+                "runtime_arith_local_const",
+                "missing skepac binary in selected profile",
+            ),
+            skipped_case(
+                "runtime_arith_local_local",
+                "missing skepac binary in selected profile",
+            ),
+            skipped_case(
+                "runtime_arith_chain",
+                "missing skepac binary in selected profile",
+            ),
+            skipped_case(
+                "runtime_call_heavy",
+                "missing skepac binary in selected profile",
+            ),
+        ]
+    };
 
     let mut cases = vec![
         BenchCase {
@@ -270,14 +314,74 @@ fn benchmark_cases(
             }),
         },
         BenchCase {
-            name: "compile_small_codegen",
+            name: "compile_small_ir_lowering",
             kind: CaseKind::Library,
             runner: Box::new({
-                let small_path = workspace.small_file.clone();
+                let source = loop_src.clone();
                 move || {
-                    let _ = compile_project_graph(&small_graph_for_codegen, &small_path)
+                    let _ =
+                        ir::lowering::compile_source_unoptimized(&source).map_err(format_diags)?;
+                    Ok(())
+                }
+            }),
+        },
+        BenchCase {
+            name: "compile_small_ir_optimize",
+            kind: CaseKind::Library,
+            runner: Box::new({
+                let source = loop_src.clone();
+                move || {
+                    let mut program =
+                        ir::lowering::compile_source_unoptimized(&source).map_err(format_diags)?;
+                    ir::opt::optimize_program(&mut program);
+                    Ok(())
+                }
+            }),
+        },
+        BenchCase {
+            name: "compile_small_llvm_emit",
+            kind: CaseKind::Library,
+            runner: Box::new({
+                let source = loop_src.clone();
+                move || {
+                    let program = ir::lowering::compile_source(&source).map_err(format_diags)?;
+                    let _ = codegen::compile_program_to_llvm_ir(&program)
                         .map_err(|err| err.to_string())?;
                     Ok(())
+                }
+            }),
+        },
+        BenchCase {
+            name: "compile_small_object",
+            kind: CaseKind::Library,
+            runner: Box::new({
+                let source = loop_src.clone();
+                move || {
+                    let program = ir::lowering::compile_source(&source).map_err(format_diags)?;
+                    let obj = temp_artifact_path("small_obj", object_ext());
+                    let result = codegen::compile_program_to_object_file(&program, &obj)
+                        .map_err(|err| err.to_string());
+                    let _ = fs::remove_file(&obj);
+                    result
+                }
+            }),
+        },
+        BenchCase {
+            name: "compile_small_link",
+            kind: CaseKind::Library,
+            runner: Box::new({
+                let source = loop_src.clone();
+                move || {
+                    let program = ir::lowering::compile_source(&source).map_err(format_diags)?;
+                    let obj = temp_artifact_path("small_link_obj", object_ext());
+                    let exe = temp_artifact_path("small_link_exe", exe_ext());
+                    codegen::compile_program_to_object_file(&program, &obj)
+                        .map_err(|err| err.to_string())?;
+                    let result = codegen::link_object_file_to_executable(&obj, &exe)
+                        .map_err(|err| err.to_string());
+                    let _ = fs::remove_file(&obj);
+                    let _ = fs::remove_file(&exe);
+                    result
                 }
             }),
         },
@@ -305,76 +409,130 @@ fn benchmark_cases(
             }),
         },
         BenchCase {
-            name: "compile_medium_codegen",
+            name: "compile_medium_ir_lowering",
             kind: CaseKind::Library,
             runner: Box::new({
-                let medium_path = workspace.medium_entry.clone();
+                let entry = workspace.medium_entry.clone();
                 move || {
-                    let _ = compile_project_graph(&medium_graph_for_codegen, &medium_path)
+                    let _ = ir::lowering::compile_project_entry_unoptimized(&entry)
+                        .map_err(format_resolve_errors)?;
+                    Ok(())
+                }
+            }),
+        },
+        BenchCase {
+            name: "compile_medium_ir_optimize",
+            kind: CaseKind::Library,
+            runner: Box::new({
+                let entry = workspace.medium_entry.clone();
+                move || {
+                    let mut program = ir::lowering::compile_project_entry_unoptimized(&entry)
+                        .map_err(format_resolve_errors)?;
+                    ir::opt::optimize_program(&mut program);
+                    Ok(())
+                }
+            }),
+        },
+        BenchCase {
+            name: "compile_medium_llvm_emit",
+            kind: CaseKind::Library,
+            runner: Box::new({
+                let entry = workspace.medium_entry.clone();
+                move || {
+                    let program = ir::lowering::compile_project_entry(&entry)
+                        .map_err(format_resolve_errors)?;
+                    let _ = codegen::compile_program_to_llvm_ir(&program)
                         .map_err(|err| err.to_string())?;
                     Ok(())
                 }
             }),
         },
         BenchCase {
-            name: "runtime_loop_heavy",
+            name: "compile_array_llvm_emit",
             kind: CaseKind::Library,
-            runner: Box::new(move || run_module(&loop_module)),
+            runner: Box::new({
+                let source = array_src.clone();
+                move || {
+                    let program = ir::lowering::compile_source(&source).map_err(format_diags)?;
+                    let _ = codegen::compile_program_to_llvm_ir(&program)
+                        .map_err(|err| err.to_string())?;
+                    Ok(())
+                }
+            }),
         },
         BenchCase {
-            name: "runtime_arith_heavy",
+            name: "compile_struct_llvm_emit",
             kind: CaseKind::Library,
-            runner: Box::new(move || run_module(&arith_module)),
+            runner: Box::new({
+                let source = struct_src.clone();
+                move || {
+                    let program = ir::lowering::compile_source(&source).map_err(format_diags)?;
+                    let _ = codegen::compile_program_to_llvm_ir(&program)
+                        .map_err(|err| err.to_string())?;
+                    Ok(())
+                }
+            }),
         },
         BenchCase {
-            name: "runtime_arith_local_const",
+            name: "compile_struct_field_llvm_emit",
             kind: CaseKind::Library,
-            runner: Box::new(move || run_module(&arith_local_const_module)),
+            runner: Box::new({
+                let source = struct_field_src.clone();
+                move || {
+                    let program = ir::lowering::compile_source(&source).map_err(format_diags)?;
+                    let _ = codegen::compile_program_to_llvm_ir(&program)
+                        .map_err(|err| err.to_string())?;
+                    Ok(())
+                }
+            }),
         },
         BenchCase {
-            name: "runtime_arith_local_local",
+            name: "compile_struct_method_complex_llvm_emit",
             kind: CaseKind::Library,
-            runner: Box::new(move || run_module(&arith_local_local_module)),
+            runner: Box::new({
+                let source = struct_complex_src.clone();
+                move || {
+                    let program = ir::lowering::compile_source(&source).map_err(format_diags)?;
+                    let _ = codegen::compile_program_to_llvm_ir(&program)
+                        .map_err(|err| err.to_string())?;
+                    Ok(())
+                }
+            }),
         },
         BenchCase {
-            name: "runtime_arith_chain",
+            name: "compile_string_llvm_emit",
             kind: CaseKind::Library,
-            runner: Box::new(move || run_module(&arith_chain_module)),
+            runner: Box::new({
+                let source = string_src.clone();
+                move || {
+                    let program = ir::lowering::compile_source(&source).map_err(format_diags)?;
+                    let _ = codegen::compile_program_to_llvm_ir(&program)
+                        .map_err(|err| err.to_string())?;
+                    Ok(())
+                }
+            }),
         },
         BenchCase {
-            name: "runtime_call_heavy",
+            name: "compile_medium_object",
             kind: CaseKind::Library,
-            runner: Box::new(move || run_module(&call_module)),
-        },
-        BenchCase {
-            name: "runtime_array_heavy",
-            kind: CaseKind::Library,
-            runner: Box::new(move || run_module(&array_module)),
-        },
-        BenchCase {
-            name: "runtime_struct_heavy",
-            kind: CaseKind::Library,
-            runner: Box::new(move || run_module(&struct_module)),
-        },
-        BenchCase {
-            name: "runtime_struct_field_heavy",
-            kind: CaseKind::Library,
-            runner: Box::new(move || run_module(&struct_field_module)),
-        },
-        BenchCase {
-            name: "runtime_struct_method_complex",
-            kind: CaseKind::Library,
-            runner: Box::new(move || run_module(&struct_complex_method_module)),
-        },
-        BenchCase {
-            name: "runtime_string_heavy",
-            kind: CaseKind::Library,
-            runner: Box::new(move || run_module(&string_module)),
+            runner: Box::new({
+                let entry = workspace.medium_entry.clone();
+                move || {
+                    let program = ir::lowering::compile_project_entry(&entry)
+                        .map_err(format_resolve_errors)?;
+                    let obj = temp_artifact_path("medium_obj", object_ext());
+                    let result = codegen::compile_program_to_object_file(&program, &obj)
+                        .map_err(|err| err.to_string());
+                    let _ = fs::remove_file(&obj);
+                    result
+                }
+            }),
         },
     ];
 
-    let cli_tools = cli_tools(&opts.profile)?;
-    if let Some(skepac) = cli_tools {
+    cases.extend(native_exec_cases);
+
+    if let Some(skepac) = cli_tool {
         let skepac_small = skepac.clone();
         cases.push(BenchCase {
             name: "cli_small_check",
@@ -433,6 +591,14 @@ fn benchmark_cases(
     }
 
     Ok(cases)
+}
+
+fn native_exec_case(name: &'static str, skepac: PathBuf, source_path: PathBuf) -> BenchCase {
+    BenchCase {
+        name,
+        kind: CaseKind::Library,
+        runner: Box::new(move || run_command(&skepac, &["run", path_str(&source_path)?])),
+    }
 }
 
 fn skipped_case(name: &'static str, reason: &'static str) -> BenchCase {
@@ -516,13 +682,6 @@ fn case_kind_label(kind: &CaseKind) -> &'static str {
     }
 }
 
-fn run_module(module: &BytecodeModule) -> Result<(), String> {
-    match Vm::run_module_main(module) {
-        Ok(_) => Ok(()),
-        Err(err) => Err(err.to_string()),
-    }
-}
-
 fn run_command(exe: &Path, args: &[&str]) -> Result<(), String> {
     let output = Command::new(exe)
         .args(args)
@@ -540,6 +699,28 @@ fn run_command(exe: &Path, args: &[&str]) -> Result<(), String> {
             stderr.trim()
         ))
     }
+}
+
+fn write_temp_source(source: &str) -> Result<PathBuf, String> {
+    let path = temp_artifact_path("bench_src", "sk");
+    fs::write(&path, source).map_err(|err| err.to_string())?;
+    Ok(path)
+}
+
+fn temp_artifact_path(label: &str, ext: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    env::temp_dir().join(format!("skepabench_{label}_{nanos}.{ext}"))
+}
+
+fn object_ext() -> &'static str {
+    if cfg!(windows) { "obj" } else { "o" }
+}
+
+fn exe_ext() -> &'static str {
+    if cfg!(windows) { "exe" } else { "out" }
 }
 
 fn path_str(path: &Path) -> Result<&str, String> {
