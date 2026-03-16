@@ -1,21 +1,12 @@
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use skeplib::bytecode;
-use skeplib::bytecode::Value;
 use skeplib::ir::{
     self, BasicBlock, BlockId, FieldRef, FunctionId, Instr, IrFunction, IrInterpError,
     IrInterpreter, IrLocal, IrProgram, IrStruct, IrTemp, IrType, IrValue, IrVerifier, PrettyIr,
     StructField, StructId, TempId, Terminator,
 };
-use skeplib::vm::{Vm, VmErrorKind};
-
-enum ExpectedValue<'a> {
-    Int(i64),
-    Bool(bool),
-    Float(f64),
-    String(&'a str),
-}
+mod common;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExpectedErrorKind {
@@ -24,16 +15,9 @@ enum ExpectedErrorKind {
     TypeMismatch,
 }
 
-fn assert_bytecode_and_ir_accept_same_source(source: &str, expected: ExpectedValue<'_>) {
-    let module = bytecode::compile_source(source).expect("bytecode lowering should succeed");
-    let value = Vm::run_module_main(&module).expect("bytecode vm should run source");
-    match &expected {
-        ExpectedValue::Int(expected) => assert_eq!(value, Value::Int(*expected)),
-        ExpectedValue::Bool(expected) => assert_eq!(value, Value::Bool(*expected)),
-        ExpectedValue::Float(expected) => assert_eq!(value, Value::Float(*expected)),
-        ExpectedValue::String(expected) => assert_eq!(value, Value::String((*expected).into())),
-    }
-
+fn assert_native_and_ir_accept_same_int_source(source: &str, expected: i32) {
+    let code = common::native_run_exit_code_ok(source);
+    assert_eq!(code, expected);
     let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
     assert!(
         !program.functions.is_empty(),
@@ -42,50 +26,10 @@ fn assert_bytecode_and_ir_accept_same_source(source: &str, expected: ExpectedVal
     let value = IrInterpreter::new(&program)
         .run_main()
         .expect("IR interpreter should run source");
-    match expected {
-        ExpectedValue::Int(expected) => assert_eq!(value, IrValue::Int(expected)),
-        ExpectedValue::Bool(expected) => assert_eq!(value, IrValue::Bool(expected)),
-        ExpectedValue::Float(expected) => assert_eq!(value, IrValue::Float(expected)),
-        ExpectedValue::String(expected) => assert_eq!(value, IrValue::String(expected.into())),
-    }
+    assert_eq!(value, IrValue::Int(i64::from(expected)));
 }
 
-fn assert_bytecode_and_ir_accept_same_project_entry(
-    entry: &std::path::Path,
-    expected: ExpectedValue<'_>,
-) {
-    let module = bytecode::compile_project_entry(entry).expect("bytecode project compile");
-    let value = Vm::run_module_main(&module).expect("bytecode vm should run project");
-    match &expected {
-        ExpectedValue::Int(expected) => assert_eq!(value, Value::Int(*expected)),
-        ExpectedValue::Bool(expected) => assert_eq!(value, Value::Bool(*expected)),
-        ExpectedValue::Float(expected) => assert_eq!(value, Value::Float(*expected)),
-        ExpectedValue::String(expected) => assert_eq!(value, Value::String((*expected).into())),
-    }
-
-    let program = ir::lowering::compile_project_entry(entry).expect("project IR lowering");
-    let value = IrInterpreter::new(&program)
-        .run_main()
-        .expect("IR interpreter should run project");
-    match expected {
-        ExpectedValue::Int(expected) => assert_eq!(value, IrValue::Int(expected)),
-        ExpectedValue::Bool(expected) => assert_eq!(value, IrValue::Bool(expected)),
-        ExpectedValue::Float(expected) => assert_eq!(value, IrValue::Float(expected)),
-        ExpectedValue::String(expected) => assert_eq!(value, IrValue::String(expected.into())),
-    }
-}
-
-fn assert_bytecode_and_ir_reject_same_source(source: &str, expected: ExpectedErrorKind) {
-    let module = bytecode::compile_source(source).expect("bytecode lowering should succeed");
-    let vm_err = Vm::run_module_main(&module).expect_err("bytecode vm should fail");
-    let vm_kind = match vm_err.kind {
-        VmErrorKind::DivisionByZero => ExpectedErrorKind::DivisionByZero,
-        VmErrorKind::IndexOutOfBounds => ExpectedErrorKind::IndexOutOfBounds,
-        VmErrorKind::TypeMismatch => ExpectedErrorKind::TypeMismatch,
-        other => panic!("unexpected VM error kind in comparison test: {other:?}"),
-    };
-    assert_eq!(vm_kind, expected);
-
+fn assert_ir_rejects_source(source: &str, expected: ExpectedErrorKind) {
     let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
     let ir_err = IrInterpreter::new(&program)
         .run_main()
@@ -1224,16 +1168,13 @@ fn main() -> Int {
     )
     .expect("entry module should be written");
 
-    let bytecode = bytecode::compile_project_entry(&entry).expect("bytecode project compile");
-    let bytecode_value = Vm::run_module_main(&bytecode).expect("bytecode vm should run project");
-    assert_eq!(bytecode_value, Value::Int(12));
-
     let program =
         ir::lowering::compile_project_entry(&entry).expect("project IR lowering should succeed");
     let ir_value = IrInterpreter::new(&program)
         .run_main()
         .expect("IR interpreter should run project");
     assert_eq!(ir_value, IrValue::Int(12));
+    assert_eq!(common::native_run_project_exit_code_ok(&entry), 12);
 
     let _ = fs::remove_dir_all(&root);
 }
@@ -1284,10 +1225,6 @@ fn main() -> Int {
     )
     .expect("entry module should be written");
 
-    let bytecode = bytecode::compile_project_entry(&entry).expect("bytecode project compile");
-    let bytecode_value = Vm::run_module_main(&bytecode).expect("bytecode vm should run project");
-    assert_eq!(bytecode_value, Value::Int(18));
-
     let program =
         ir::lowering::compile_project_entry(&entry).expect("project IR lowering should succeed");
     let ir_value = IrInterpreter::new(&program)
@@ -1299,7 +1236,7 @@ fn main() -> Int {
 }
 
 #[test]
-fn bytecode_and_ir_accept_same_project_with_globals_and_string_builtins() {
+fn ir_accepts_same_project_with_globals_and_string_builtins() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock should be monotonic enough for temp name")
@@ -1351,24 +1288,29 @@ fn main() -> Int {
     )
     .expect("entry module should be written");
 
-    assert_bytecode_and_ir_accept_same_project_entry(&entry, ExpectedValue::Int(40));
+    let program =
+        ir::lowering::compile_project_entry(&entry).expect("project IR lowering should succeed");
+    let value = IrInterpreter::new(&program)
+        .run_main()
+        .expect("IR interpreter should run project");
+    assert_eq!(value, IrValue::Int(40));
 
     let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
-fn bytecode_and_ir_reject_same_division_by_zero_source() {
+fn ir_rejects_division_by_zero_source() {
     let source = r#"
 fn main() -> Int {
   return 8 / 0;
 }
 "#;
 
-    assert_bytecode_and_ir_reject_same_source(source, ExpectedErrorKind::DivisionByZero);
+    assert_ir_rejects_source(source, ExpectedErrorKind::DivisionByZero);
 }
 
 #[test]
-fn bytecode_and_ir_reject_same_array_oob_source() {
+fn ir_rejects_array_oob_source() {
     let source = r#"
 fn main() -> Int {
   let arr: [Int; 2] = [1; 2];
@@ -1376,11 +1318,11 @@ fn main() -> Int {
 }
 "#;
 
-    assert_bytecode_and_ir_reject_same_source(source, ExpectedErrorKind::IndexOutOfBounds);
+    assert_ir_rejects_source(source, ExpectedErrorKind::IndexOutOfBounds);
 }
 
 #[test]
-fn bytecode_and_ir_reject_same_string_slice_oob_source() {
+fn ir_rejects_string_slice_oob_source() {
     let source = r#"
 import str;
 
@@ -1389,11 +1331,11 @@ fn main() -> String {
 }
 "#;
 
-    assert_bytecode_and_ir_reject_same_source(source, ExpectedErrorKind::IndexOutOfBounds);
+    assert_ir_rejects_source(source, ExpectedErrorKind::IndexOutOfBounds);
 }
 
 #[test]
-fn bytecode_and_ir_accept_same_core_control_flow_source() {
+fn native_and_ir_accept_same_core_control_flow_source() {
     let source = r#"
 fn main() -> Int {
   let i = 0;
@@ -1406,11 +1348,11 @@ fn main() -> Int {
 }
 "#;
 
-    assert_bytecode_and_ir_accept_same_source(source, ExpectedValue::Int(15));
+    assert_native_and_ir_accept_same_int_source(source, 15);
 }
 
 #[test]
-fn bytecode_and_ir_accept_same_for_loop_source() {
+fn native_and_ir_accept_same_for_loop_source() {
     let source = r#"
 fn main() -> Int {
   let acc = 0;
@@ -1427,11 +1369,11 @@ fn main() -> Int {
 }
 "#;
 
-    assert_bytecode_and_ir_accept_same_source(source, ExpectedValue::Int(13));
+    assert_native_and_ir_accept_same_int_source(source, 13);
 }
 
 #[test]
-fn bytecode_and_ir_accept_same_struct_and_method_source() {
+fn ir_accepts_same_struct_and_method_source() {
     let source = r#"
 struct Pair {
   a: Int,
@@ -1451,11 +1393,15 @@ fn main() -> Int {
 }
 "#;
 
-    assert_bytecode_and_ir_accept_same_source(source, ExpectedValue::Int(16));
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let value = IrInterpreter::new(&program)
+        .run_main()
+        .expect("IR interpreter should run source");
+    assert_eq!(value, IrValue::Int(16));
 }
 
 #[test]
-fn bytecode_and_ir_accept_same_array_and_vec_source() {
+fn ir_accepts_same_array_and_vec_source() {
     let source = r#"
 fn main() -> Int {
   let arr: [Int; 3] = [1; 3];
@@ -1467,11 +1413,15 @@ fn main() -> Int {
 }
 "#;
 
-    assert_bytecode_and_ir_accept_same_source(source, ExpectedValue::Int(7));
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let value = IrInterpreter::new(&program)
+        .run_main()
+        .expect("IR interpreter should run source");
+    assert_eq!(value, IrValue::Int(7));
 }
 
 #[test]
-fn bytecode_and_ir_accept_same_string_builtin_source() {
+fn ir_accepts_same_string_builtin_source() {
     let source = r#"
 fn main() -> Int {
   let s = "skepa-language-benchmark";
@@ -1486,11 +1436,15 @@ fn main() -> Int {
 }
 "#;
 
-    assert_bytecode_and_ir_accept_same_source(source, ExpectedValue::Int(40));
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let value = IrInterpreter::new(&program)
+        .run_main()
+        .expect("IR interpreter should run source");
+    assert_eq!(value, IrValue::Int(40));
 }
 
 #[test]
-fn bytecode_and_ir_accept_same_float_source() {
+fn ir_accepts_same_float_source() {
     let source = r#"
 fn main() -> Float {
   let x = 1.5;
@@ -1499,11 +1453,15 @@ fn main() -> Float {
 }
 "#;
 
-    assert_bytecode_and_ir_accept_same_source(source, ExpectedValue::Float(7.0));
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let value = IrInterpreter::new(&program)
+        .run_main()
+        .expect("IR interpreter should run source");
+    assert_eq!(value, IrValue::Float(7.0));
 }
 
 #[test]
-fn bytecode_and_ir_accept_same_bool_short_circuit_source() {
+fn ir_accepts_same_bool_short_circuit_source() {
     let source = r#"
 fn main() -> Bool {
   let a = true;
@@ -1512,11 +1470,15 @@ fn main() -> Bool {
 }
 "#;
 
-    assert_bytecode_and_ir_accept_same_source(source, ExpectedValue::Bool(true));
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let value = IrInterpreter::new(&program)
+        .run_main()
+        .expect("IR interpreter should run source");
+    assert_eq!(value, IrValue::Bool(true));
 }
 
 #[test]
-fn bytecode_and_ir_accept_same_string_builtin_output_source() {
+fn ir_accepts_same_string_builtin_output_source() {
     let source = r#"
 fn main() -> String {
   let s = "alpha-beta";
@@ -1528,5 +1490,9 @@ fn main() -> String {
 }
 "#;
 
-    assert_bytecode_and_ir_accept_same_source(source, ExpectedValue::String("alpha-ok"));
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let value = IrInterpreter::new(&program)
+        .run_main()
+        .expect("IR interpreter should run source");
+    assert_eq!(value, IrValue::String("alpha-ok".into()));
 }

@@ -6,14 +6,12 @@ use std::process::Output;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use skeplib::ast::Program;
-use skeplib::bytecode::{BytecodeModule, compile_source};
 use skeplib::codegen;
 use skeplib::diagnostic::DiagnosticBag;
 use skeplib::ir;
 use skeplib::ir::{IrInterpError, IrInterpreter, IrProgram};
 use skeplib::parser::Parser;
 use skeplib::sema::{SemaResult, analyze_source};
-use skeplib::vm::{Vm, VmError};
 
 pub fn parse_ok(src: &str) -> Program {
     let (program, diags) = Parser::parse_source(src);
@@ -44,24 +42,6 @@ pub fn sema_err(src: &str) -> (SemaResult, DiagnosticBag) {
         "expected sema diagnostics but got none for:\n{src}"
     );
     (result, diags)
-}
-
-pub fn compile_ok(src: &str) -> BytecodeModule {
-    compile_source(src).expect("compile should succeed")
-}
-
-pub fn compile_err(src: &str) -> DiagnosticBag {
-    compile_source(src).expect_err("compile should fail")
-}
-
-pub fn vm_run_ok(src: &str) -> skeplib::bytecode::Value {
-    let module = compile_ok(src);
-    Vm::run_module_main(&module).expect("vm run")
-}
-
-pub fn vm_run_err(src: &str) -> VmError {
-    let module = compile_ok(src);
-    Vm::run_module_main(&module).expect_err("vm run should fail")
 }
 
 pub fn assert_has_diag(diags: &DiagnosticBag, needle: &str) {
@@ -119,9 +99,23 @@ pub fn native_run_ok(src: &str) -> Output {
     native_run_program(&program)
 }
 
+pub fn native_run_exit_code_ok(src: &str) -> i32 {
+    native_run_ok(src)
+        .status
+        .code()
+        .expect("native executable should produce an exit code")
+}
+
 pub fn native_run_project_ok(entry: &Path) -> Output {
     let program = compile_project_ir_ok(entry);
     native_run_program(&program)
+}
+
+pub fn native_run_project_exit_code_ok(entry: &Path) -> i32 {
+    native_run_project_ok(entry)
+        .status
+        .code()
+        .expect("native executable should produce an exit code")
 }
 
 fn native_run_program(program: &IrProgram) -> Output {
