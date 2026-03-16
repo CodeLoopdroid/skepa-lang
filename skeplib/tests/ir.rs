@@ -4,8 +4,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use skeplib::bytecode;
 use skeplib::bytecode::Value;
 use skeplib::ir::{
-    self, BasicBlock, BlockId, FunctionId, IrFunction, IrInterpError, IrInterpreter, IrProgram,
-    IrType, IrValue, IrVerifier, PrettyIr, Terminator,
+    self, BasicBlock, BlockId, FieldRef, FunctionId, Instr, IrFunction, IrInterpError,
+    IrInterpreter, IrLocal, IrProgram, IrStruct, IrTemp, IrType, IrValue, IrVerifier, PrettyIr,
+    StructField, StructId, TempId, Terminator,
 };
 use skeplib::vm::{Vm, VmErrorKind};
 
@@ -183,6 +184,96 @@ fn verifier_rejects_unknown_direct_call_target() {
     assert!(matches!(
         err,
         ir::IrVerifyError::UnknownFunctionTarget { .. }
+    ));
+}
+
+#[test]
+fn verifier_rejects_duplicate_block_ids() {
+    let func = IrFunction {
+        id: FunctionId(0),
+        name: "main".into(),
+        params: Vec::new(),
+        locals: Vec::new(),
+        temps: Vec::new(),
+        ret_ty: IrType::Int,
+        entry: BlockId(0),
+        blocks: vec![
+            BasicBlock {
+                id: BlockId(0),
+                name: "entry".into(),
+                instrs: Vec::new(),
+                terminator: Terminator::Jump(BlockId(0)),
+            },
+            BasicBlock {
+                id: BlockId(0),
+                name: "duplicate".into(),
+                instrs: Vec::new(),
+                terminator: Terminator::Return(Some(ir::Operand::Const(ir::ConstValue::Int(0)))),
+            },
+        ],
+    };
+    let program = IrProgram {
+        functions: vec![func],
+        globals: Vec::new(),
+        structs: Vec::new(),
+        module_init: None,
+    };
+
+    let err = IrVerifier::verify_program(&program).expect_err("verifier should fail");
+    assert!(matches!(err, ir::IrVerifyError::DuplicateBlockId { .. }));
+}
+
+#[test]
+fn verifier_rejects_unknown_struct_field_ref() {
+    let strukt = IrStruct {
+        id: StructId(0),
+        name: "Pair".into(),
+        fields: vec![StructField {
+            name: "a".into(),
+            ty: IrType::Int,
+        }],
+    };
+    let func = IrFunction {
+        id: FunctionId(0),
+        name: "main".into(),
+        params: Vec::new(),
+        locals: vec![IrLocal {
+            id: ir::LocalId(0),
+            name: "pair".into(),
+            ty: IrType::Named("Pair".into()),
+        }],
+        temps: vec![IrTemp {
+            id: TempId(0),
+            ty: IrType::Int,
+        }],
+        ret_ty: IrType::Int,
+        entry: BlockId(0),
+        blocks: vec![BasicBlock {
+            id: BlockId(0),
+            name: "entry".into(),
+            instrs: vec![Instr::StructGet {
+                dst: TempId(0),
+                ty: IrType::Int,
+                base: ir::Operand::Local(ir::LocalId(0)),
+                field: FieldRef {
+                    index: 1,
+                    name: "b".into(),
+                },
+            }],
+            terminator: Terminator::Return(Some(ir::Operand::Const(ir::ConstValue::Int(0)))),
+        }],
+    };
+    let program = IrProgram {
+        functions: vec![func],
+        globals: Vec::new(),
+        structs: vec![strukt],
+        module_init: None,
+    };
+
+    let err = IrVerifier::verify_program(&program).expect_err("verifier should fail");
+    assert!(matches!(
+        err,
+        ir::IrVerifyError::UnknownField { ref field, .. } if field == "b"
     ));
 }
 
