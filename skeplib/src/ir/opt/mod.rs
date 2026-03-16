@@ -2,8 +2,10 @@ mod cfg_simplify;
 mod const_fold;
 mod copy_prop;
 mod dce;
+mod dead_store;
 mod inlining;
 mod licm;
+mod loop_simplify;
 mod strength_reduce;
 
 use crate::ir::IrProgram;
@@ -16,6 +18,8 @@ pub fn optimize_program(program: &mut IrProgram) {
         changed |= dce::run(program);
         changed |= cfg_simplify::run(program);
         changed |= inlining::run(program);
+        changed |= dead_store::run(program);
+        changed |= loop_simplify::run(program);
         changed |= licm::run(program);
         changed |= strength_reduce::run(program);
         if !changed {

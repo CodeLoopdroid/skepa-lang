@@ -263,6 +263,305 @@ fn main() -> Int {
 }
 
 #[test]
+fn optimize_program_eliminates_overwritten_local_stores() {
+    let local = IrLocal {
+        id: skeplib::ir::LocalId(0),
+        name: "x".into(),
+        ty: IrType::Int,
+    };
+    let temp = IrTemp {
+        id: TempId(0),
+        ty: IrType::Int,
+    };
+    let func = IrFunction {
+        id: FunctionId(0),
+        name: "main".into(),
+        params: Vec::new(),
+        locals: vec![local.clone()],
+        temps: vec![temp],
+        ret_ty: IrType::Int,
+        entry: BlockId(0),
+        blocks: vec![BasicBlock {
+            id: BlockId(0),
+            name: "entry".into(),
+            instrs: vec![
+                Instr::StoreLocal {
+                    local: local.id,
+                    ty: IrType::Int,
+                    value: ir::Operand::Const(ir::ConstValue::Int(1)),
+                },
+                Instr::StoreLocal {
+                    local: local.id,
+                    ty: IrType::Int,
+                    value: ir::Operand::Const(ir::ConstValue::Int(2)),
+                },
+                Instr::LoadLocal {
+                    dst: TempId(0),
+                    ty: IrType::Int,
+                    local: local.id,
+                },
+            ],
+            terminator: Terminator::Return(Some(ir::Operand::Temp(TempId(0)))),
+        }],
+    };
+    let mut program = IrProgram {
+        structs: Vec::new(),
+        globals: Vec::new(),
+        functions: vec![func],
+        module_init: None,
+    };
+
+    ir::opt::optimize_program(&mut program);
+
+    let main = &program.functions[0];
+    let store_count = main.blocks[0]
+        .instrs
+        .iter()
+        .filter(|instr| matches!(instr, Instr::StoreLocal { .. }))
+        .count();
+    assert_eq!(store_count, 1);
+}
+
+#[test]
+fn optimize_program_simplifies_empty_loop_body_blocks() {
+    let cond = IrLocal {
+        id: skeplib::ir::LocalId(0),
+        name: "cond".into(),
+        ty: IrType::Bool,
+    };
+    let mut program = IrProgram {
+        structs: Vec::new(),
+        globals: Vec::new(),
+        functions: vec![IrFunction {
+            id: FunctionId(0),
+            name: "main".into(),
+            params: Vec::new(),
+            locals: vec![cond],
+            temps: Vec::new(),
+            ret_ty: IrType::Int,
+            entry: BlockId(0),
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    name: "entry".into(),
+                    instrs: Vec::new(),
+                    terminator: Terminator::Jump(BlockId(1)),
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    name: "while_cond".into(),
+                    instrs: Vec::new(),
+                    terminator: Terminator::Branch(ir::BranchTerminator {
+                        cond: ir::Operand::Local(skeplib::ir::LocalId(0)),
+                        then_block: BlockId(2),
+                        else_block: BlockId(3),
+                    }),
+                },
+                BasicBlock {
+                    id: BlockId(2),
+                    name: "while_body".into(),
+                    instrs: Vec::new(),
+                    terminator: Terminator::Jump(BlockId(1)),
+                },
+                BasicBlock {
+                    id: BlockId(3),
+                    name: "while_exit".into(),
+                    instrs: Vec::new(),
+                    terminator: Terminator::Return(Some(ir::Operand::Const(ir::ConstValue::Int(
+                        7,
+                    )))),
+                },
+            ],
+        }],
+        module_init: None,
+    };
+
+    ir::opt::optimize_program(&mut program);
+
+    let main = &program.functions[0];
+    assert!(!main.blocks.iter().any(|block| block.name == "while_body"));
+}
+
+#[test]
+fn optimize_program_simplifies_loop_invariant_const_usage() {
+    let cond = IrLocal {
+        id: skeplib::ir::LocalId(0),
+        name: "cond".into(),
+        ty: IrType::Bool,
+    };
+    let sink = IrLocal {
+        id: skeplib::ir::LocalId(1),
+        name: "sink".into(),
+        ty: IrType::Int,
+    };
+    let temp = IrTemp {
+        id: TempId(0),
+        ty: IrType::Int,
+    };
+    let exit_temp = IrTemp {
+        id: TempId(1),
+        ty: IrType::Int,
+    };
+    let mut program = IrProgram {
+        structs: Vec::new(),
+        globals: Vec::new(),
+        functions: vec![IrFunction {
+            id: FunctionId(0),
+            name: "main".into(),
+            params: Vec::new(),
+            locals: vec![cond, sink.clone()],
+            temps: vec![temp, exit_temp],
+            ret_ty: IrType::Int,
+            entry: BlockId(0),
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    name: "entry".into(),
+                    instrs: Vec::new(),
+                    terminator: Terminator::Jump(BlockId(1)),
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    name: "while_cond".into(),
+                    instrs: Vec::new(),
+                    terminator: Terminator::Branch(ir::BranchTerminator {
+                        cond: ir::Operand::Local(skeplib::ir::LocalId(0)),
+                        then_block: BlockId(2),
+                        else_block: BlockId(3),
+                    }),
+                },
+                BasicBlock {
+                    id: BlockId(2),
+                    name: "while_body".into(),
+                    instrs: vec![
+                        Instr::Const {
+                            dst: TempId(0),
+                            ty: IrType::Int,
+                            value: ir::ConstValue::Int(1),
+                        },
+                        Instr::StoreLocal {
+                            local: sink.id,
+                            ty: IrType::Int,
+                            value: ir::Operand::Temp(TempId(0)),
+                        },
+                    ],
+                    terminator: Terminator::Jump(BlockId(1)),
+                },
+                BasicBlock {
+                    id: BlockId(3),
+                    name: "while_exit".into(),
+                    instrs: vec![Instr::LoadLocal {
+                        dst: TempId(1),
+                        ty: IrType::Int,
+                        local: sink.id,
+                    }],
+                    terminator: Terminator::Return(Some(ir::Operand::Temp(TempId(1)))),
+                },
+            ],
+        }],
+        module_init: None,
+    };
+
+    ir::opt::optimize_program(&mut program);
+
+    let main = &program.functions[0];
+    let entry = main
+        .blocks
+        .iter()
+        .find(|block| block.name == "entry")
+        .expect("entry block should exist");
+    let while_body = main
+        .blocks
+        .iter()
+        .find(|block| block.name == "while_body")
+        .expect("while body should still exist");
+    assert!(
+        !while_body
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, Instr::Const { .. }))
+    );
+    assert!(
+        entry
+            .instrs
+            .iter()
+            .all(|instr| !matches!(instr, Instr::StoreLocal { .. }))
+    );
+}
+
+#[test]
+fn optimize_program_applies_strength_reduction_identities() {
+    let local = IrLocal {
+        id: skeplib::ir::LocalId(0),
+        name: "x".into(),
+        ty: IrType::Int,
+    };
+    let temps = vec![
+        IrTemp {
+            id: TempId(0),
+            ty: IrType::Int,
+        },
+        IrTemp {
+            id: TempId(1),
+            ty: IrType::Int,
+        },
+    ];
+    let mut program = IrProgram {
+        structs: Vec::new(),
+        globals: Vec::new(),
+        functions: vec![IrFunction {
+            id: FunctionId(0),
+            name: "main".into(),
+            params: Vec::new(),
+            locals: vec![local.clone()],
+            temps,
+            ret_ty: IrType::Int,
+            entry: BlockId(0),
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                name: "entry".into(),
+                instrs: vec![
+                    Instr::Binary {
+                        dst: TempId(0),
+                        ty: IrType::Int,
+                        op: ir::BinaryOp::Mul,
+                        left: ir::Operand::Local(local.id),
+                        right: ir::Operand::Const(ir::ConstValue::Int(2)),
+                    },
+                    Instr::Binary {
+                        dst: TempId(1),
+                        ty: IrType::Int,
+                        op: ir::BinaryOp::Mod,
+                        left: ir::Operand::Local(local.id),
+                        right: ir::Operand::Const(ir::ConstValue::Int(1)),
+                    },
+                ],
+                terminator: Terminator::Return(Some(ir::Operand::Temp(TempId(0)))),
+            }],
+        }],
+        module_init: None,
+    };
+
+    ir::opt::optimize_program(&mut program);
+
+    let main = &program.functions[0];
+    assert!(main.blocks[0].instrs.iter().any(|instr| matches!(
+        instr,
+        Instr::Binary {
+            op: ir::BinaryOp::Add,
+            ..
+        }
+    )));
+    assert!(!main.blocks[0].instrs.iter().any(|instr| matches!(
+        instr,
+        Instr::Binary {
+            op: ir::BinaryOp::Mod,
+            ..
+        }
+    )));
+}
+
+#[test]
 fn verifier_rejects_unknown_jump_target() {
     let func = IrFunction {
         id: FunctionId(0),
