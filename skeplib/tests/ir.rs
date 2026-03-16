@@ -188,6 +188,29 @@ fn main() -> Int {
 }
 
 #[test]
+fn compile_source_simplifies_cfg_after_constant_branching() {
+    let source = r#"
+fn main() -> Int {
+  if (true) {
+    return 7;
+  } else {
+    return 9;
+  }
+  return 0;
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let value = IrInterpreter::new(&program)
+        .run_main()
+        .expect("IR interpreter should run optimized source");
+    assert_eq!(value, IrValue::Int(7));
+
+    let printed = PrettyIr::new(&program).to_string();
+    assert!(!printed.contains("Branch(BranchTerminator"));
+}
+
+#[test]
 fn verifier_rejects_unknown_jump_target() {
     let func = IrFunction {
         id: FunctionId(0),
