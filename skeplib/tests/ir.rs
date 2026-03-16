@@ -278,6 +278,137 @@ fn verifier_rejects_unknown_struct_field_ref() {
 }
 
 #[test]
+fn verifier_rejects_unknown_temp_operand() {
+    let func = IrFunction {
+        id: FunctionId(0),
+        name: "main".into(),
+        params: Vec::new(),
+        locals: Vec::new(),
+        temps: Vec::new(),
+        ret_ty: IrType::Int,
+        entry: BlockId(0),
+        blocks: vec![BasicBlock {
+            id: BlockId(0),
+            name: "entry".into(),
+            instrs: vec![Instr::Copy {
+                dst: TempId(1),
+                ty: IrType::Int,
+                src: ir::Operand::Temp(TempId(99)),
+            }],
+            terminator: Terminator::Return(Some(ir::Operand::Const(ir::ConstValue::Int(0)))),
+        }],
+    };
+    let program = IrProgram {
+        functions: vec![func],
+        globals: Vec::new(),
+        structs: Vec::new(),
+        module_init: None,
+    };
+
+    let err = IrVerifier::verify_program(&program).expect_err("verifier should fail");
+    assert!(matches!(err, ir::IrVerifyError::UnknownTemp { .. }));
+}
+
+#[test]
+fn verifier_rejects_unknown_local_operand() {
+    let func = IrFunction {
+        id: FunctionId(0),
+        name: "main".into(),
+        params: Vec::new(),
+        locals: Vec::new(),
+        temps: vec![IrTemp {
+            id: TempId(0),
+            ty: IrType::Int,
+        }],
+        ret_ty: IrType::Int,
+        entry: BlockId(0),
+        blocks: vec![BasicBlock {
+            id: BlockId(0),
+            name: "entry".into(),
+            instrs: vec![Instr::StoreLocal {
+                local: ir::LocalId(77),
+                ty: IrType::Int,
+                value: ir::Operand::Const(ir::ConstValue::Int(1)),
+            }],
+            terminator: Terminator::Return(Some(ir::Operand::Const(ir::ConstValue::Int(0)))),
+        }],
+    };
+    let program = IrProgram {
+        functions: vec![func],
+        globals: Vec::new(),
+        structs: Vec::new(),
+        module_init: None,
+    };
+
+    let err = IrVerifier::verify_program(&program).expect_err("verifier should fail");
+    assert!(matches!(err, ir::IrVerifyError::UnknownLocal { .. }));
+}
+
+#[test]
+fn verifier_rejects_unknown_global_operand() {
+    let func = IrFunction {
+        id: FunctionId(0),
+        name: "main".into(),
+        params: Vec::new(),
+        locals: Vec::new(),
+        temps: vec![IrTemp {
+            id: TempId(0),
+            ty: IrType::Int,
+        }],
+        ret_ty: IrType::Int,
+        entry: BlockId(0),
+        blocks: vec![BasicBlock {
+            id: BlockId(0),
+            name: "entry".into(),
+            instrs: vec![Instr::LoadGlobal {
+                dst: TempId(0),
+                ty: IrType::Int,
+                global: ir::GlobalId(42),
+            }],
+            terminator: Terminator::Return(Some(ir::Operand::Const(ir::ConstValue::Int(0)))),
+        }],
+    };
+    let program = IrProgram {
+        functions: vec![func],
+        globals: Vec::new(),
+        structs: Vec::new(),
+        module_init: None,
+    };
+
+    let err = IrVerifier::verify_program(&program).expect_err("verifier should fail");
+    assert!(matches!(err, ir::IrVerifyError::UnknownGlobal));
+}
+
+#[test]
+fn verifier_rejects_unknown_module_init_target() {
+    let program = IrProgram {
+        functions: vec![IrFunction {
+            id: FunctionId(0),
+            name: "main".into(),
+            params: Vec::new(),
+            locals: Vec::new(),
+            temps: Vec::new(),
+            ret_ty: IrType::Int,
+            entry: BlockId(0),
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                name: "entry".into(),
+                instrs: Vec::new(),
+                terminator: Terminator::Return(Some(ir::Operand::Const(ir::ConstValue::Int(0)))),
+            }],
+        }],
+        globals: Vec::new(),
+        structs: Vec::new(),
+        module_init: Some(ir::IrModuleInit {
+            function: FunctionId(99),
+        }),
+    };
+
+    let err = IrVerifier::verify_program(&program).expect_err("verifier should fail");
+    assert!(matches!(err, ir::IrVerifyError::UnknownModuleInitFunction));
+}
+
+#[test]
 fn interpreter_rejects_non_bool_branch_condition() {
     let func = IrFunction {
         id: FunctionId(0),
@@ -803,6 +934,19 @@ fn bytecode_and_ir_reject_same_array_oob_source() {
 fn main() -> Int {
   let arr: [Int; 2] = [1; 2];
   return arr[3];
+}
+"#;
+
+    assert_bytecode_and_ir_reject_same_source(source, ExpectedErrorKind::IndexOutOfBounds);
+}
+
+#[test]
+fn bytecode_and_ir_reject_same_string_slice_oob_source() {
+    let source = r#"
+import str;
+
+fn main() -> String {
+  return str.slice("abc", 0, 99);
 }
 "#;
 
