@@ -839,7 +839,8 @@ fn main() -> Int {
     let module = compile_source(src).expect("compile should succeed");
     let main = module.functions.get("main").expect("main chunk exists");
     assert!(
-        !main.code
+        !main
+            .code
             .iter()
             .any(|instr| matches!(instr, Instr::CallMethodId { .. })),
         "local struct method call should not lower to CallMethodId: {:?}",
