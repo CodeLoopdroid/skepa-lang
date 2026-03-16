@@ -7,21 +7,8 @@ use std::collections::HashMap;
 
 pub fn ensure_supported(instr: &Instr) -> Result<(), CodegenError> {
     match instr {
-        Instr::MakeArray { .. }
-        | Instr::MakeArrayRepeat { .. }
-        | Instr::ArrayGet { .. }
-        | Instr::ArraySet { .. }
-        | Instr::VecNew { .. }
-        | Instr::VecLen { .. }
-        | Instr::VecPush { .. }
-        | Instr::VecGet { .. }
-        | Instr::VecSet { .. }
-        | Instr::VecDelete { .. }
-        | Instr::MakeStruct { .. }
-        | Instr::StructGet { .. }
-        | Instr::StructSet { .. }
-        | Instr::MakeClosure { .. } => Err(CodegenError::Unsupported(
-            "runtime-backed values are not lowered until later LLVM milestones",
+        Instr::MakeClosure { .. } => Err(CodegenError::Unsupported(
+            "runtime-backed function values are not lowered until later LLVM milestones",
         )),
         Instr::CallBuiltin { builtin, .. } if !is_supported_builtin(builtin) => Err(
             CodegenError::Unsupported("only str.* builtins are lowered in current LLVM milestone"),
@@ -30,22 +17,37 @@ pub fn ensure_supported(instr: &Instr) -> Result<(), CodegenError> {
     }
 }
 
-pub fn emit_runtime_decls(program: &IrProgram, out: &mut Vec<String>) {
-    if uses_strings(program) {
-        out.push("declare ptr @skp_rt_string_from_utf8(ptr, i64)".into());
-    }
-    if uses_builtin(program, "str", "len") {
-        out.push("declare i64 @skp_rt_builtin_str_len(ptr)".into());
-    }
-    if uses_builtin(program, "str", "contains") {
-        out.push("declare i1 @skp_rt_builtin_str_contains(ptr, ptr)".into());
-    }
-    if uses_builtin(program, "str", "indexOf") {
-        out.push("declare i64 @skp_rt_builtin_str_index_of(ptr, ptr)".into());
-    }
-    if uses_builtin(program, "str", "slice") {
-        out.push("declare ptr @skp_rt_builtin_str_slice(ptr, i64, i64)".into());
-    }
+pub fn emit_runtime_decls(_program: &IrProgram, out: &mut Vec<String>) {
+    out.push("declare ptr @skp_rt_string_from_utf8(ptr, i64)".into());
+    out.push("declare i64 @skp_rt_builtin_str_len(ptr)".into());
+    out.push("declare i1 @skp_rt_builtin_str_contains(ptr, ptr)".into());
+    out.push("declare i64 @skp_rt_builtin_str_index_of(ptr, ptr)".into());
+    out.push("declare ptr @skp_rt_builtin_str_slice(ptr, i64, i64)".into());
+    out.push("declare ptr @skp_rt_value_from_int(i64)".into());
+    out.push("declare ptr @skp_rt_value_from_bool(i1)".into());
+    out.push("declare ptr @skp_rt_value_from_string(ptr)".into());
+    out.push("declare ptr @skp_rt_value_from_array(ptr)".into());
+    out.push("declare ptr @skp_rt_value_from_vec(ptr)".into());
+    out.push("declare ptr @skp_rt_value_from_struct(ptr)".into());
+    out.push("declare i64 @skp_rt_value_to_int(ptr)".into());
+    out.push("declare i1 @skp_rt_value_to_bool(ptr)".into());
+    out.push("declare ptr @skp_rt_value_to_string(ptr)".into());
+    out.push("declare ptr @skp_rt_value_to_array(ptr)".into());
+    out.push("declare ptr @skp_rt_value_to_vec(ptr)".into());
+    out.push("declare ptr @skp_rt_value_to_struct(ptr)".into());
+    out.push("declare ptr @skp_rt_array_new(i64)".into());
+    out.push("declare ptr @skp_rt_array_repeat(ptr, i64)".into());
+    out.push("declare ptr @skp_rt_array_get(ptr, i64)".into());
+    out.push("declare void @skp_rt_array_set(ptr, i64, ptr)".into());
+    out.push("declare ptr @skp_rt_vec_new()".into());
+    out.push("declare i64 @skp_rt_vec_len(ptr)".into());
+    out.push("declare void @skp_rt_vec_push(ptr, ptr)".into());
+    out.push("declare ptr @skp_rt_vec_get(ptr, i64)".into());
+    out.push("declare void @skp_rt_vec_set(ptr, i64, ptr)".into());
+    out.push("declare ptr @skp_rt_vec_delete(ptr, i64)".into());
+    out.push("declare ptr @skp_rt_struct_new(i64, i64)".into());
+    out.push("declare ptr @skp_rt_struct_get(ptr, i64)".into());
+    out.push("declare void @skp_rt_struct_set(ptr, i64, ptr)".into());
 }
 
 pub struct BuiltinCallInstr<'a> {
@@ -114,84 +116,521 @@ pub fn emit_builtin_call(
     Ok(())
 }
 
-fn uses_strings(program: &IrProgram) -> bool {
-    program
-        .globals
-        .iter()
-        .any(|g| matches!(g.ty, IrType::String))
-        || program.functions.iter().any(function_uses_strings)
-}
-
-fn function_uses_strings(func: &IrFunction) -> bool {
-    matches!(func.ret_ty, IrType::String)
-        || func
-            .params
-            .iter()
-            .any(|param| matches!(param.ty, IrType::String))
-        || func
-            .locals
-            .iter()
-            .any(|local| matches!(local.ty, IrType::String))
-        || func
-            .temps
-            .iter()
-            .any(|temp| matches!(temp.ty, IrType::String))
-        || func.blocks.iter().any(|block| {
-            block.instrs.iter().any(instr_uses_strings)
-                || matches!(
-                    &block.terminator,
-                    crate::ir::Terminator::Return(Some(crate::ir::Operand::Const(
-                        crate::ir::ConstValue::String(_),
-                    )))
-                )
-        })
-}
-
-fn instr_uses_strings(instr: &Instr) -> bool {
-    match instr {
-        Instr::Const { ty, value, .. } => {
-            matches!(ty, IrType::String) || matches!(value, crate::ir::ConstValue::String(_))
-        }
-        Instr::Copy { ty, src, .. }
-        | Instr::StoreGlobal { ty, value: src, .. }
-        | Instr::StoreLocal { ty, value: src, .. } => {
-            matches!(ty, IrType::String)
-                || matches!(
-                    src,
-                    crate::ir::Operand::Const(crate::ir::ConstValue::String(_))
-                )
-        }
-        Instr::LoadGlobal { ty, .. } | Instr::LoadLocal { ty, .. } => matches!(ty, IrType::String),
-        Instr::CallDirect { ret_ty, args, .. } | Instr::CallBuiltin { ret_ty, args, .. } => {
-            matches!(ret_ty, IrType::String)
-                || args.iter().any(|arg| {
-                    matches!(
-                        arg,
-                        crate::ir::Operand::Const(crate::ir::ConstValue::String(_))
-                    )
-                })
-        }
-        _ => false,
-    }
-}
-
-fn uses_builtin(program: &IrProgram, package: &str, name: &str) -> bool {
-    program.functions.iter().any(|func| {
-        func.blocks.iter().any(|block| {
-            block.instrs.iter().any(|instr| match instr {
-                Instr::CallBuiltin { builtin, .. } => {
-                    builtin.package == package && builtin.name == name
-                }
-                _ => false,
-            })
-        })
-    })
-}
-
 fn is_supported_builtin(builtin: &BuiltinCall) -> bool {
     builtin.package == "str"
         && matches!(
             builtin.name.as_str(),
             "len" | "contains" | "indexOf" | "slice"
         )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn emit_make_array(
+    func: &IrFunction,
+    names: &ValueNames,
+    dst: TempId,
+    elem_ty: &IrType,
+    items: &[crate::ir::Operand],
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<(), CodegenError> {
+    let dest = names.temp(dst)?;
+    lines.push(format!(
+        "  {dest} = call ptr @skp_rt_array_new(i64 {})",
+        items.len()
+    ));
+    for (index, item) in items.iter().enumerate() {
+        let boxed =
+            emit_boxed_operand(func, names, item, elem_ty, lines, counter, string_literals)?;
+        lines.push(format!(
+            "  call void @skp_rt_array_set(ptr {dest}, i64 {index}, ptr {boxed})"
+        ));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn emit_make_array_repeat(
+    func: &IrFunction,
+    names: &ValueNames,
+    dst: TempId,
+    elem_ty: &IrType,
+    value: &crate::ir::Operand,
+    size: usize,
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<(), CodegenError> {
+    let dest = names.temp(dst)?;
+    let boxed = emit_boxed_operand(func, names, value, elem_ty, lines, counter, string_literals)?;
+    lines.push(format!(
+        "  {dest} = call ptr @skp_rt_array_repeat(ptr {boxed}, i64 {size})"
+    ));
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn emit_array_get(
+    func: &IrFunction,
+    names: &ValueNames,
+    dst: TempId,
+    elem_ty: &IrType,
+    array: &crate::ir::Operand,
+    index: &crate::ir::Operand,
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<(), CodegenError> {
+    let array = operand_load(
+        names,
+        array,
+        func,
+        lines,
+        counter,
+        &IrType::Array {
+            elem: Box::new(elem_ty.clone()),
+            size: 0,
+        },
+        string_literals,
+    )?;
+    let index = operand_load(
+        names,
+        index,
+        func,
+        lines,
+        counter,
+        &IrType::Int,
+        string_literals,
+    )?;
+    let raw = format!("%v{counter}");
+    *counter += 1;
+    lines.push(format!(
+        "  {raw} = call ptr @skp_rt_array_get(ptr {array}, i64 {index})"
+    ));
+    emit_unbox_value(names, dst, elem_ty, &raw, lines)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn emit_array_set(
+    func: &IrFunction,
+    names: &ValueNames,
+    elem_ty: &IrType,
+    array: &crate::ir::Operand,
+    index: &crate::ir::Operand,
+    value: &crate::ir::Operand,
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<(), CodegenError> {
+    let array = operand_load(
+        names,
+        array,
+        func,
+        lines,
+        counter,
+        &IrType::Array {
+            elem: Box::new(elem_ty.clone()),
+            size: 0,
+        },
+        string_literals,
+    )?;
+    let index = operand_load(
+        names,
+        index,
+        func,
+        lines,
+        counter,
+        &IrType::Int,
+        string_literals,
+    )?;
+    let boxed = emit_boxed_operand(func, names, value, elem_ty, lines, counter, string_literals)?;
+    lines.push(format!(
+        "  call void @skp_rt_array_set(ptr {array}, i64 {index}, ptr {boxed})"
+    ));
+    Ok(())
+}
+
+pub fn emit_vec_new(
+    names: &ValueNames,
+    dst: TempId,
+    lines: &mut Vec<String>,
+) -> Result<(), CodegenError> {
+    let dest = names.temp(dst)?;
+    lines.push(format!("  {dest} = call ptr @skp_rt_vec_new()"));
+    Ok(())
+}
+
+pub fn emit_vec_len(
+    func: &IrFunction,
+    names: &ValueNames,
+    dst: TempId,
+    vec: &crate::ir::Operand,
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<(), CodegenError> {
+    let vec = operand_load(
+        names,
+        vec,
+        func,
+        lines,
+        counter,
+        &IrType::Vec {
+            elem: Box::new(IrType::Unknown),
+        },
+        string_literals,
+    )?;
+    let dest = names.temp(dst)?;
+    lines.push(format!("  {dest} = call i64 @skp_rt_vec_len(ptr {vec})"));
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn emit_vec_push(
+    func: &IrFunction,
+    names: &ValueNames,
+    elem_ty: &IrType,
+    vec: &crate::ir::Operand,
+    value: &crate::ir::Operand,
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<(), CodegenError> {
+    let elem_ty = if matches!(elem_ty, IrType::Unknown) {
+        infer_operand_type(func, value)
+    } else {
+        elem_ty.clone()
+    };
+    let vec = operand_load(
+        names,
+        vec,
+        func,
+        lines,
+        counter,
+        &IrType::Vec {
+            elem: Box::new(elem_ty.clone()),
+        },
+        string_literals,
+    )?;
+    let boxed = emit_boxed_operand(
+        func,
+        names,
+        value,
+        &elem_ty,
+        lines,
+        counter,
+        string_literals,
+    )?;
+    lines.push(format!(
+        "  call void @skp_rt_vec_push(ptr {vec}, ptr {boxed})"
+    ));
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn emit_vec_get(
+    func: &IrFunction,
+    names: &ValueNames,
+    dst: TempId,
+    elem_ty: &IrType,
+    vec: &crate::ir::Operand,
+    index: &crate::ir::Operand,
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<(), CodegenError> {
+    let vec = operand_load(
+        names,
+        vec,
+        func,
+        lines,
+        counter,
+        &IrType::Vec {
+            elem: Box::new(elem_ty.clone()),
+        },
+        string_literals,
+    )?;
+    let index = operand_load(
+        names,
+        index,
+        func,
+        lines,
+        counter,
+        &IrType::Int,
+        string_literals,
+    )?;
+    let raw = format!("%v{counter}");
+    *counter += 1;
+    lines.push(format!(
+        "  {raw} = call ptr @skp_rt_vec_get(ptr {vec}, i64 {index})"
+    ));
+    emit_unbox_value(names, dst, elem_ty, &raw, lines)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn emit_vec_set(
+    func: &IrFunction,
+    names: &ValueNames,
+    elem_ty: &IrType,
+    vec: &crate::ir::Operand,
+    index: &crate::ir::Operand,
+    value: &crate::ir::Operand,
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<(), CodegenError> {
+    let vec = operand_load(
+        names,
+        vec,
+        func,
+        lines,
+        counter,
+        &IrType::Vec {
+            elem: Box::new(elem_ty.clone()),
+        },
+        string_literals,
+    )?;
+    let index = operand_load(
+        names,
+        index,
+        func,
+        lines,
+        counter,
+        &IrType::Int,
+        string_literals,
+    )?;
+    let boxed = emit_boxed_operand(func, names, value, elem_ty, lines, counter, string_literals)?;
+    lines.push(format!(
+        "  call void @skp_rt_vec_set(ptr {vec}, i64 {index}, ptr {boxed})"
+    ));
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn emit_vec_delete(
+    func: &IrFunction,
+    names: &ValueNames,
+    dst: TempId,
+    elem_ty: &IrType,
+    vec: &crate::ir::Operand,
+    index: &crate::ir::Operand,
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<(), CodegenError> {
+    let vec = operand_load(
+        names,
+        vec,
+        func,
+        lines,
+        counter,
+        &IrType::Vec {
+            elem: Box::new(elem_ty.clone()),
+        },
+        string_literals,
+    )?;
+    let index = operand_load(
+        names,
+        index,
+        func,
+        lines,
+        counter,
+        &IrType::Int,
+        string_literals,
+    )?;
+    let raw = format!("%v{counter}");
+    *counter += 1;
+    lines.push(format!(
+        "  {raw} = call ptr @skp_rt_vec_delete(ptr {vec}, i64 {index})"
+    ));
+    emit_unbox_value(names, dst, elem_ty, &raw, lines)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn emit_make_struct(
+    program: &IrProgram,
+    func: &IrFunction,
+    names: &ValueNames,
+    dst: TempId,
+    struct_id: crate::ir::StructId,
+    fields: &[crate::ir::Operand],
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<(), CodegenError> {
+    let struct_info = program
+        .structs
+        .iter()
+        .find(|candidate| candidate.id == struct_id)
+        .ok_or_else(|| CodegenError::InvalidIr(format!("unknown struct {:?}", struct_id)))?;
+    let dest = names.temp(dst)?;
+    lines.push(format!(
+        "  {dest} = call ptr @skp_rt_struct_new(i64 {}, i64 {})",
+        struct_id.0,
+        fields.len()
+    ));
+    for (index, (field, field_info)) in fields.iter().zip(&struct_info.fields).enumerate() {
+        let boxed = emit_boxed_operand(
+            func,
+            names,
+            field,
+            &field_info.ty,
+            lines,
+            counter,
+            string_literals,
+        )?;
+        lines.push(format!(
+            "  call void @skp_rt_struct_set(ptr {dest}, i64 {index}, ptr {boxed})"
+        ));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn emit_struct_get(
+    func: &IrFunction,
+    names: &ValueNames,
+    dst: TempId,
+    ty: &IrType,
+    base: &crate::ir::Operand,
+    field: &crate::ir::FieldRef,
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<(), CodegenError> {
+    let base = operand_load(
+        names,
+        base,
+        func,
+        lines,
+        counter,
+        &IrType::Named(String::new()),
+        string_literals,
+    )?;
+    let raw = format!("%v{counter}");
+    *counter += 1;
+    lines.push(format!(
+        "  {raw} = call ptr @skp_rt_struct_get(ptr {base}, i64 {})",
+        field.index
+    ));
+    emit_unbox_value(names, dst, ty, &raw, lines)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn emit_struct_set(
+    func: &IrFunction,
+    names: &ValueNames,
+    ty: &IrType,
+    base: &crate::ir::Operand,
+    field: &crate::ir::FieldRef,
+    value: &crate::ir::Operand,
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<(), CodegenError> {
+    let base = operand_load(
+        names,
+        base,
+        func,
+        lines,
+        counter,
+        &IrType::Named(String::new()),
+        string_literals,
+    )?;
+    let boxed = emit_boxed_operand(func, names, value, ty, lines, counter, string_literals)?;
+    lines.push(format!(
+        "  call void @skp_rt_struct_set(ptr {base}, i64 {}, ptr {boxed})",
+        field.index
+    ));
+    Ok(())
+}
+
+fn emit_boxed_operand(
+    func: &IrFunction,
+    names: &ValueNames,
+    operand: &crate::ir::Operand,
+    ty: &IrType,
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<String, CodegenError> {
+    let value = operand_load(names, operand, func, lines, counter, ty, string_literals)?;
+    let boxed = format!("%v{counter}");
+    *counter += 1;
+    let helper = match ty {
+        IrType::Int => "skp_rt_value_from_int",
+        IrType::Bool => "skp_rt_value_from_bool",
+        IrType::String => "skp_rt_value_from_string",
+        IrType::Array { .. } => "skp_rt_value_from_array",
+        IrType::Vec { .. } => "skp_rt_value_from_vec",
+        IrType::Named(_) => "skp_rt_value_from_struct",
+        _ => {
+            return Err(CodegenError::Unsupported(
+                "boxing is only implemented for Int/Bool/String/Array/Vec/Struct",
+            ));
+        }
+    };
+    lines.push(format!(
+        "  {boxed} = call ptr @{helper}({} {value})",
+        llvm_ty(ty)?
+    ));
+    Ok(boxed)
+}
+
+fn emit_unbox_value(
+    names: &ValueNames,
+    dst: TempId,
+    ty: &IrType,
+    raw: &str,
+    lines: &mut Vec<String>,
+) -> Result<(), CodegenError> {
+    let dest = names.temp(dst)?;
+    match ty {
+        IrType::Int => lines.push(format!(
+            "  {dest} = call i64 @skp_rt_value_to_int(ptr {raw})"
+        )),
+        IrType::Bool => lines.push(format!(
+            "  {dest} = call i1 @skp_rt_value_to_bool(ptr {raw})"
+        )),
+        IrType::String => lines.push(format!(
+            "  {dest} = call ptr @skp_rt_value_to_string(ptr {raw})"
+        )),
+        IrType::Array { .. } => lines.push(format!(
+            "  {dest} = call ptr @skp_rt_value_to_array(ptr {raw})"
+        )),
+        IrType::Vec { .. } => lines.push(format!(
+            "  {dest} = call ptr @skp_rt_value_to_vec(ptr {raw})"
+        )),
+        IrType::Named(_) => lines.push(format!(
+            "  {dest} = call ptr @skp_rt_value_to_struct(ptr {raw})"
+        )),
+        _ => {
+            return Err(CodegenError::Unsupported(
+                "unboxing is only implemented for Int/Bool/String/Array/Vec/Struct",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn infer_operand_type(func: &IrFunction, operand: &crate::ir::Operand) -> IrType {
+    match operand {
+        crate::ir::Operand::Const(crate::ir::ConstValue::Int(_)) => IrType::Int,
+        crate::ir::Operand::Const(crate::ir::ConstValue::Bool(_)) => IrType::Bool,
+        crate::ir::Operand::Const(crate::ir::ConstValue::String(_)) => IrType::String,
+        crate::ir::Operand::Temp(id) => func
+            .temps
+            .iter()
+            .find(|temp| temp.id == *id)
+            .map(|temp| temp.ty.clone())
+            .unwrap_or(IrType::Unknown),
+        crate::ir::Operand::Local(id) => func
+            .locals
+            .iter()
+            .find(|local| local.id == *id)
+            .map(|local| local.ty.clone())
+            .unwrap_or(IrType::Unknown),
+        _ => IrType::Unknown,
+    }
 }

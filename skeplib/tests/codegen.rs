@@ -278,3 +278,145 @@ fn main() -> Int {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn llvm_codegen_emits_array_runtime_calls() {
+    let source = r#"
+fn main() -> Int {
+  let arr: [Int; 3] = [0; 3];
+  arr[1] = 7;
+  arr[2] = arr[1] + 5;
+  return arr[2];
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let llvm_ir =
+        codegen::compile_program_to_llvm_ir(&program).expect("LLVM lowering should succeed");
+
+    assert!(llvm_ir.contains("declare ptr @skp_rt_array_new(i64)"));
+    assert!(llvm_ir.contains("declare ptr @skp_rt_array_get(ptr, i64)"));
+    assert!(llvm_ir.contains("declare void @skp_rt_array_set(ptr, i64, ptr)"));
+    assert!(llvm_ir.contains("@skp_rt_value_from_int"));
+    assert!(llvm_ir.contains("@skp_rt_value_to_int"));
+
+    let ll_path = temp_file("array_runtime", "ll");
+    let bc_path = temp_file("array_runtime", "bc");
+    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
+
+    let output = Command::new("llvm-as")
+        .arg(&ll_path)
+        .arg("-o")
+        .arg(&bc_path)
+        .output()
+        .expect("llvm-as should be available on PATH");
+
+    let _ = fs::remove_file(&ll_path);
+    let _ = fs::remove_file(&bc_path);
+
+    assert!(
+        output.status.success(),
+        "llvm-as rejected generated IR: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn llvm_codegen_emits_struct_runtime_calls_and_methods() {
+    let source = r#"
+struct Pair {
+  a: Int,
+  b: Int
+}
+
+impl Pair {
+  fn mix(self, x: Int) -> Int {
+    if (x < 0) {
+      return self.a;
+    }
+    return self.a + self.b + x;
+  }
+}
+
+fn main() -> Int {
+  let p = Pair { a: 2, b: 3 };
+  p.a = 7;
+  return p.mix(4);
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let llvm_ir =
+        codegen::compile_program_to_llvm_ir(&program).expect("LLVM lowering should succeed");
+
+    assert!(llvm_ir.contains("declare ptr @skp_rt_struct_new(i64, i64)"));
+    assert!(llvm_ir.contains("declare ptr @skp_rt_struct_get(ptr, i64)"));
+    assert!(llvm_ir.contains("declare void @skp_rt_struct_set(ptr, i64, ptr)"));
+    assert!(llvm_ir.contains("define i64 @\"Pair::mix\"(ptr %arg0, i64 %arg1)"));
+
+    let ll_path = temp_file("struct_runtime", "ll");
+    let bc_path = temp_file("struct_runtime", "bc");
+    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
+
+    let output = Command::new("llvm-as")
+        .arg(&ll_path)
+        .arg("-o")
+        .arg(&bc_path)
+        .output()
+        .expect("llvm-as should be available on PATH");
+
+    let _ = fs::remove_file(&ll_path);
+    let _ = fs::remove_file(&bc_path);
+
+    assert!(
+        output.status.success(),
+        "llvm-as rejected generated IR: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn llvm_codegen_emits_vec_runtime_calls() {
+    let source = r#"
+fn main() -> Int {
+  let xs: Vec[Int] = vec.new();
+  vec.push(xs, 10);
+  vec.push(xs, 20);
+  vec.set(xs, 1, 30);
+  let first = vec.get(xs, 0);
+  let removed = vec.delete(xs, 1);
+  return first + removed + vec.len(xs);
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let llvm_ir =
+        codegen::compile_program_to_llvm_ir(&program).expect("LLVM lowering should succeed");
+
+    assert!(llvm_ir.contains("declare ptr @skp_rt_vec_new()"));
+    assert!(llvm_ir.contains("declare i64 @skp_rt_vec_len(ptr)"));
+    assert!(llvm_ir.contains("declare void @skp_rt_vec_push(ptr, ptr)"));
+    assert!(llvm_ir.contains("declare ptr @skp_rt_vec_get(ptr, i64)"));
+    assert!(llvm_ir.contains("declare void @skp_rt_vec_set(ptr, i64, ptr)"));
+    assert!(llvm_ir.contains("declare ptr @skp_rt_vec_delete(ptr, i64)"));
+
+    let ll_path = temp_file("vec_runtime", "ll");
+    let bc_path = temp_file("vec_runtime", "bc");
+    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
+
+    let output = Command::new("llvm-as")
+        .arg(&ll_path)
+        .arg("-o")
+        .arg(&bc_path)
+        .output()
+        .expect("llvm-as should be available on PATH");
+
+    let _ = fs::remove_file(&ll_path);
+    let _ = fs::remove_file(&bc_path);
+
+    assert!(
+        output.status.success(),
+        "llvm-as rejected generated IR: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

@@ -48,9 +48,13 @@ impl<'a> LlvmEmitter<'a> {
                 Some(_) | None => match global.ty {
                     // Non-constant initializers are materialized through __globals_init.
                     crate::ir::IrType::Int | crate::ir::IrType::Bool => "0".into(),
+                    crate::ir::IrType::String
+                    | crate::ir::IrType::Named(_)
+                    | crate::ir::IrType::Array { .. }
+                    | crate::ir::IrType::Vec { .. } => "null".into(),
                     _ => {
                         return Err(CodegenError::Unsupported(
-                            "only Int/Bool globals are supported in initial LLVM lowering",
+                            "only scalar and runtime-backed pointer globals are supported in current LLVM lowering",
                         ));
                     }
                 },
@@ -98,9 +102,7 @@ impl<'a> LlvmEmitter<'a> {
         }
 
         runtime::emit_runtime_decls(self.program, &mut out);
-        if needs_runtime_decls(self.program) {
-            out.push(String::new());
-        }
+        out.push(String::new());
 
         for func in &self.program.functions {
             out.extend(self.emit_function(func)?);
@@ -398,6 +400,209 @@ impl<'a> LlvmEmitter<'a> {
                     &self.string_literals,
                 )?;
             }
+            Instr::MakeArray {
+                dst,
+                elem_ty,
+                items,
+            } => {
+                runtime::emit_make_array(
+                    func,
+                    names,
+                    *dst,
+                    elem_ty,
+                    items,
+                    lines,
+                    counter,
+                    &self.string_literals,
+                )?;
+            }
+            Instr::MakeArrayRepeat {
+                dst,
+                elem_ty,
+                value,
+                size,
+            } => {
+                runtime::emit_make_array_repeat(
+                    func,
+                    names,
+                    *dst,
+                    elem_ty,
+                    value,
+                    *size,
+                    lines,
+                    counter,
+                    &self.string_literals,
+                )?;
+            }
+            Instr::ArrayGet {
+                dst,
+                elem_ty,
+                array,
+                index,
+            } => {
+                runtime::emit_array_get(
+                    func,
+                    names,
+                    *dst,
+                    elem_ty,
+                    array,
+                    index,
+                    lines,
+                    counter,
+                    &self.string_literals,
+                )?;
+            }
+            Instr::ArraySet {
+                elem_ty,
+                array,
+                index,
+                value,
+            } => {
+                runtime::emit_array_set(
+                    func,
+                    names,
+                    elem_ty,
+                    array,
+                    index,
+                    value,
+                    lines,
+                    counter,
+                    &self.string_literals,
+                )?;
+            }
+            Instr::VecNew { dst, .. } => {
+                runtime::emit_vec_new(names, *dst, lines)?;
+            }
+            Instr::VecLen { dst, vec } => {
+                runtime::emit_vec_len(
+                    func,
+                    names,
+                    *dst,
+                    vec,
+                    lines,
+                    counter,
+                    &self.string_literals,
+                )?;
+            }
+            Instr::VecPush { vec, value } => {
+                runtime::emit_vec_push(
+                    func,
+                    names,
+                    &crate::ir::IrType::Unknown,
+                    vec,
+                    value,
+                    lines,
+                    counter,
+                    &self.string_literals,
+                )?;
+            }
+            Instr::VecGet {
+                dst,
+                elem_ty,
+                vec,
+                index,
+            } => {
+                runtime::emit_vec_get(
+                    func,
+                    names,
+                    *dst,
+                    elem_ty,
+                    vec,
+                    index,
+                    lines,
+                    counter,
+                    &self.string_literals,
+                )?;
+            }
+            Instr::VecSet {
+                elem_ty,
+                vec,
+                index,
+                value,
+            } => {
+                runtime::emit_vec_set(
+                    func,
+                    names,
+                    elem_ty,
+                    vec,
+                    index,
+                    value,
+                    lines,
+                    counter,
+                    &self.string_literals,
+                )?;
+            }
+            Instr::VecDelete {
+                dst,
+                elem_ty,
+                vec,
+                index,
+            } => {
+                runtime::emit_vec_delete(
+                    func,
+                    names,
+                    *dst,
+                    elem_ty,
+                    vec,
+                    index,
+                    lines,
+                    counter,
+                    &self.string_literals,
+                )?;
+            }
+            Instr::MakeStruct {
+                dst,
+                struct_id,
+                fields,
+            } => {
+                runtime::emit_make_struct(
+                    self.program,
+                    func,
+                    names,
+                    *dst,
+                    *struct_id,
+                    fields,
+                    lines,
+                    counter,
+                    &self.string_literals,
+                )?;
+            }
+            Instr::StructGet {
+                dst,
+                ty,
+                base,
+                field,
+            } => {
+                runtime::emit_struct_get(
+                    func,
+                    names,
+                    *dst,
+                    ty,
+                    base,
+                    field,
+                    lines,
+                    counter,
+                    &self.string_literals,
+                )?;
+            }
+            Instr::StructSet {
+                base,
+                field,
+                value,
+                ty,
+            } => {
+                runtime::emit_struct_set(
+                    func,
+                    names,
+                    ty,
+                    base,
+                    field,
+                    value,
+                    lines,
+                    counter,
+                    &self.string_literals,
+                )?;
+            }
             _ => {
                 return Err(CodegenError::Unsupported(
                     "instruction not yet supported in LLVM lowering",
@@ -548,20 +753,4 @@ fn encode_c_string(value: &str) -> String {
     }
     out.push_str("\\00");
     out
-}
-
-fn needs_runtime_decls(program: &IrProgram) -> bool {
-    runtime_needed(program)
-}
-
-fn runtime_needed(program: &IrProgram) -> bool {
-    !collect_string_literals(program).is_empty()
-        || program.functions.iter().any(|func| {
-            func.blocks.iter().any(|block| {
-                block
-                    .instrs
-                    .iter()
-                    .any(|instr| matches!(instr, Instr::CallBuiltin { .. }))
-            })
-        })
 }
