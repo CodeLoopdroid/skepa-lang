@@ -822,6 +822,34 @@ fn main() -> Int {
 }
 
 #[test]
+fn local_struct_method_call_uses_direct_lowering_not_dynamic_method_dispatch() {
+    let src = r#"
+struct Pair { a: Int, b: Int }
+impl Pair {
+  fn mix(self, x: Int) -> Int {
+    return ((self.a + x) * 3 + self.b) % 1000000007;
+  }
+}
+
+fn main() -> Int {
+  let p = Pair { a: 11, b: 7 };
+  return p.mix(5);
+}
+"#;
+    let module = compile_source(src).expect("compile should succeed");
+    let main = module.functions.get("main").expect("main chunk exists");
+    assert!(
+        !main.code
+            .iter()
+            .any(|instr| matches!(instr, Instr::CallMethodId { .. })),
+        "local struct method call should not lower to CallMethodId: {:?}",
+        main.code
+    );
+    let out = Vm::run_module_main(&module).expect("vm run");
+    assert_eq!(out, Value::Int(55));
+}
+
+#[test]
 fn runs_nested_struct_field_assignment() {
     let src = r#"
 struct Profile { age: Int }

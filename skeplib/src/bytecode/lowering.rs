@@ -140,19 +140,19 @@ impl Compiler {
                 self.inlinable_functions.insert(q, pattern);
             }
         }
-        for imp in &program.impls {
-            for method in &imp.methods {
-                let target_name = self.resolve_struct_runtime_name(&imp.target);
-                self.function_names
-                    .insert(Self::mangle_method_name(&target_name, &method.name));
-            }
-        }
         for s in &program.structs {
             let runtime = match &self.module_id {
                 Some(id) => format!("{id}::{}", s.name),
                 None => s.name.clone(),
             };
             self.local_struct_runtime.insert(s.name.clone(), runtime);
+        }
+        for imp in &program.impls {
+            for method in &imp.methods {
+                let target_name = self.resolve_struct_runtime_name(&imp.target);
+                self.function_names
+                    .insert(Self::mangle_method_name(&target_name, &method.name));
+            }
         }
         for s in &program.structs {
             let runtime = self.resolve_struct_runtime_name(&s.name);
