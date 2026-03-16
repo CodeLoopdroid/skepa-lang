@@ -99,6 +99,30 @@ fn main() -> Int {
 }
 
 #[test]
+fn peephole_fusion_preserves_while_exit_jump_targets() {
+    let src = r#"
+fn arithmetic_work(n: Int) -> Int {
+  let i = 1;
+  let acc = 17;
+  while (i < n) {
+    acc = acc + ((i * 3) % 97);
+    acc = acc - (i % 11);
+    acc = acc + ((acc / 3) % 29);
+    i = i + 1;
+  }
+  return acc;
+}
+
+fn main() -> Int {
+  return arithmetic_work(8);
+}
+"#;
+    let module = compile_source(src).expect("compile should succeed");
+    let out = Vm::run_module_main(&module).expect("vm run");
+    assert_eq!(out, Value::Int(151));
+}
+
+#[test]
 fn runs_while_with_break() {
     let src = r#"
 fn main() -> Int {
