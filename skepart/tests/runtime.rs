@@ -1,4 +1,6 @@
-use skepart::{RtArray, RtErrorKind, RtString, RtValue, RtVec};
+use skepart::{
+    builtins, NoopHost, RtArray, RtErrorKind, RtHost, RtString, RtStruct, RtValue, RtVec,
+};
 
 #[test]
 fn arrays_use_copy_on_write_value_storage() {
@@ -63,4 +65,64 @@ fn string_builtins_match_current_runtime_shape() {
         skepart::str_builtin::slice(&value, 6, 18).expect("slice should work"),
         RtString::from("language-ben")
     );
+}
+
+#[test]
+fn generic_builtin_dispatch_handles_core_runtime_helpers() {
+    let array = RtArray::new(vec![
+        RtValue::String(RtString::from("a")),
+        RtValue::String(RtString::from("b")),
+    ]);
+    let vec = RtVec::new();
+
+    assert_eq!(
+        builtins::call(
+            "arr",
+            "join",
+            &[RtValue::Array(array), RtValue::String(RtString::from("-"))]
+        )
+        .expect("arr.join should succeed"),
+        RtValue::String(RtString::from("a-b"))
+    );
+
+    assert_eq!(
+        builtins::call("vec", "new", &[])
+            .expect("vec.new should succeed")
+            .type_name(),
+        "Vec"
+    );
+
+    builtins::call("vec", "push", &[RtValue::Vec(vec.clone()), RtValue::Int(4)])
+        .expect("vec.push should succeed");
+    assert_eq!(
+        builtins::call("vec", "get", &[RtValue::Vec(vec), RtValue::Int(0)])
+            .expect("vec.get should succeed"),
+        RtValue::Int(4)
+    );
+}
+
+#[test]
+fn values_and_structs_expose_runtime_checked_accessors() {
+    let value = RtValue::Struct(RtStruct {
+        name: "Pair".into(),
+        fields: vec![RtValue::Int(1), RtValue::Int(2)],
+    });
+    let mut strukt = value.expect_struct().expect("struct should match");
+
+    assert_eq!(strukt.get_field(1), Ok(RtValue::Int(2)));
+    strukt
+        .set_field(0, RtValue::Int(9))
+        .expect("field write should work");
+    assert_eq!(strukt.get_field(0), Ok(RtValue::Int(9)));
+    assert_eq!(
+        RtValue::Bool(true).expect_int().unwrap_err().kind,
+        RtErrorKind::TypeMismatch
+    );
+}
+
+#[test]
+fn host_trait_is_callable_from_runtime_clients() {
+    let mut host = NoopHost;
+    host.io_print("hello");
+    host.io_println("world");
 }
