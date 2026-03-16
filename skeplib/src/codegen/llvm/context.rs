@@ -204,8 +204,16 @@ impl<'a> LlvmEmitter<'a> {
                 let dest = names.temp(*dst)?;
                 let value =
                     operand_load(names, src, func, lines, counter, ty, &self.string_literals)?;
-                if matches!(ty, crate::ir::IrType::String) {
+                if matches!(
+                    ty,
+                    crate::ir::IrType::String
+                        | crate::ir::IrType::Named(_)
+                        | crate::ir::IrType::Array { .. }
+                        | crate::ir::IrType::Vec { .. }
+                ) {
                     lines.push(format!("  {dest} = bitcast ptr {value} to ptr"));
+                } else if matches!(ty, crate::ir::IrType::Fn { .. }) {
+                    lines.push(format!("  {dest} = add i32 0, {value}"));
                 } else {
                     lines.push(format!("  {dest} = add {} 0, {value}", llvm_ty(ty)?));
                 }
@@ -395,6 +403,28 @@ impl<'a> LlvmEmitter<'a> {
                         builtin,
                         args,
                     },
+                    lines,
+                    counter,
+                    &self.string_literals,
+                )?;
+            }
+            Instr::MakeClosure { dst, function } => {
+                let dest = names.temp(*dst)?;
+                lines.push(format!("  {dest} = add i32 0, {}", function.0));
+            }
+            Instr::CallIndirect {
+                dst,
+                ret_ty,
+                callee,
+                args,
+            } => {
+                runtime::emit_indirect_call(
+                    func,
+                    names,
+                    *dst,
+                    ret_ty,
+                    callee,
+                    args,
                     lines,
                     counter,
                     &self.string_literals,
@@ -603,11 +633,6 @@ impl<'a> LlvmEmitter<'a> {
                     &self.string_literals,
                 )?;
             }
-            _ => {
-                return Err(CodegenError::Unsupported(
-                    "instruction not yet supported in LLVM lowering",
-                ));
-            }
         }
         Ok(())
     }
@@ -732,11 +757,33 @@ fn collect_instr_string_literals(
             add_operand(right);
         }
         Instr::StoreGlobal { value, .. } | Instr::StoreLocal { value, .. } => add_operand(value),
-        Instr::CallDirect { args, .. } | Instr::CallBuiltin { args, .. } => {
+        Instr::CallDirect { args, .. } => {
             for arg in args {
                 add_operand(arg);
             }
         }
+        Instr::CallBuiltin { builtin, args, .. } => {
+            for arg in args {
+                add_operand(arg);
+            }
+            literals.entry(builtin.package.clone()).or_insert_with(|| {
+                let name = format!("@.str.{index}");
+                *index += 1;
+                name
+            });
+            literals.entry(builtin.name.clone()).or_insert_with(|| {
+                let name = format!("@.str.{index}");
+                *index += 1;
+                name
+            });
+        }
+        Instr::CallIndirect { callee, args, .. } => {
+            add_operand(callee);
+            for arg in args {
+                add_operand(arg);
+            }
+        }
+        Instr::MakeClosure { .. } => {}
         _ => {}
     }
 }

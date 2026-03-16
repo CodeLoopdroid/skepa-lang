@@ -420,3 +420,93 @@ fn main() -> Int {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn llvm_codegen_emits_generic_runtime_builtin_dispatch() {
+    let source = r#"
+import datetime;
+import fs;
+import os;
+import str;
+
+fn main() -> Int {
+  let now = datetime.nowUnix();
+  let cwd = os.cwd();
+  if (fs.exists("missing.txt")) {
+    return now + str.len(cwd);
+  }
+  return now;
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let llvm_ir =
+        codegen::compile_program_to_llvm_ir(&program).expect("LLVM lowering should succeed");
+
+    assert!(llvm_ir.contains("declare ptr @skp_rt_call_builtin(ptr, ptr, i64, ptr)"));
+    assert!(llvm_ir.contains("call ptr @skp_rt_call_builtin("));
+    assert!(llvm_ir.contains("@.str."));
+
+    let ll_path = temp_file("generic_builtin_runtime", "ll");
+    let bc_path = temp_file("generic_builtin_runtime", "bc");
+    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
+
+    let output = Command::new("llvm-as")
+        .arg(&ll_path)
+        .arg("-o")
+        .arg(&bc_path)
+        .output()
+        .expect("llvm-as should be available on PATH");
+
+    let _ = fs::remove_file(&ll_path);
+    let _ = fs::remove_file(&bc_path);
+
+    assert!(
+        output.status.success(),
+        "llvm-as rejected generated IR: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn llvm_codegen_emits_indirect_call_trampoline() {
+    let source = r#"
+fn step(x: Int) -> Int {
+  return x + 1;
+}
+
+fn main() -> Int {
+  let f = step;
+  return f(4);
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let llvm_ir =
+        codegen::compile_program_to_llvm_ir(&program).expect("LLVM lowering should succeed");
+
+    assert!(llvm_ir.contains("declare ptr @skp_rt_call_function(i32, i64, ptr)"));
+    assert!(llvm_ir.contains("call ptr @skp_rt_call_function("));
+    assert!(llvm_ir.contains("declare ptr @skp_rt_value_from_function(i32)"));
+    assert!(llvm_ir.contains("declare i32 @skp_rt_value_to_function(ptr)"));
+
+    let ll_path = temp_file("indirect_call_runtime", "ll");
+    let bc_path = temp_file("indirect_call_runtime", "bc");
+    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
+
+    let output = Command::new("llvm-as")
+        .arg(&ll_path)
+        .arg("-o")
+        .arg(&bc_path)
+        .output()
+        .expect("llvm-as should be available on PATH");
+
+    let _ = fs::remove_file(&ll_path);
+    let _ = fs::remove_file(&bc_path);
+
+    assert!(
+        output.status.success(),
+        "llvm-as rejected generated IR: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

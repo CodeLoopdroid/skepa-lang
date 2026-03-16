@@ -38,6 +38,7 @@ pub fn operand_value(
 ) -> Result<String, CodegenError> {
     match operand {
         Operand::Const(ConstValue::Int(v)) => Ok(v.to_string()),
+        Operand::Const(ConstValue::Float(v)) => Ok(v.to_string()),
         Operand::Const(ConstValue::Bool(v)) => Ok(if *v { "1".into() } else { "0".into() }),
         Operand::Temp(id) => Ok(names.temp(*id)?.to_string()),
         Operand::Local(id) => Ok(format!("%local{}", id.0)),
@@ -98,4 +99,22 @@ pub fn operand_load(
         }
         _ => operand_value(names, operand, func),
     }
+}
+
+pub fn raw_string_ptr(
+    value: &str,
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<String, CodegenError> {
+    let name = string_literals
+        .get(value)
+        .ok_or_else(|| CodegenError::InvalidIr("missing string literal declaration".into()))?;
+    let gep = format!("%v{counter}");
+    *counter += 1;
+    let bytes = value.len() + 1;
+    lines.push(format!(
+        "  {gep} = getelementptr inbounds [{bytes} x i8], ptr {name}, i64 0, i64 0"
+    ));
+    Ok(gep)
 }

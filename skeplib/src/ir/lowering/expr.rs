@@ -431,18 +431,23 @@ impl IrLowerer {
                     OkOperand::from_call_result(dst)
                 } else {
                     let callee = self.compile_expr(func, lowering, callee)?;
-                    let dst = self.builder.push_temp(func, IrType::Unknown);
+                    let ret_ty = self.indirect_call_return_type(func, &callee);
+                    let dst = if ret_ty.is_void() {
+                        None
+                    } else {
+                        Some(self.builder.push_temp(func, ret_ty.clone()))
+                    };
                     self.builder.push_instr(
                         func,
                         lowering.current_block,
                         Instr::CallIndirect {
-                            dst: Some(dst),
-                            ret_ty: IrType::Unknown,
+                            dst,
+                            ret_ty: ret_ty.clone(),
                             callee,
                             args: lowered_args,
                         },
                     );
-                    Some(Operand::Temp(dst))
+                    OkOperand::from_call_result(dst)
                 }
             }
             Expr::Field { base, field } => {
@@ -511,18 +516,23 @@ impl IrLowerer {
             }
             _ => {
                 let callee = self.compile_expr(func, lowering, callee)?;
-                let dst = self.builder.push_temp(func, IrType::Unknown);
+                let ret_ty = self.indirect_call_return_type(func, &callee);
+                let dst = if ret_ty.is_void() {
+                    None
+                } else {
+                    Some(self.builder.push_temp(func, ret_ty.clone()))
+                };
                 self.builder.push_instr(
                     func,
                     lowering.current_block,
                     Instr::CallIndirect {
-                        dst: Some(dst),
-                        ret_ty: IrType::Unknown,
+                        dst,
+                        ret_ty: ret_ty.clone(),
                         callee,
                         args: lowered_args,
                     },
                 );
-                Some(Operand::Temp(dst))
+                OkOperand::from_call_result(dst)
             }
         }
     }
@@ -738,9 +748,33 @@ impl IrLowerer {
             ("str", "contains") => Some(IrType::Bool),
             ("str", "indexOf") => Some(IrType::Int),
             ("str", "slice") => Some(IrType::String),
+            ("arr", "len") => Some(IrType::Int),
+            ("arr", "isEmpty") => Some(IrType::Bool),
+            ("arr", "first" | "last") => Some(IrType::Unknown),
+            ("arr", "join") => Some(IrType::String),
+            ("vec", "new") => Some(IrType::Unknown),
+            ("vec", "len") => Some(IrType::Int),
+            ("vec", "push" | "set") => Some(IrType::Void),
+            ("vec", "get" | "delete") => Some(IrType::Unknown),
             ("io", "print" | "println" | "printf") => Some(IrType::Void),
             ("io", "format") => Some(IrType::String),
             ("io", "readLine") => Some(IrType::String),
+            (
+                "datetime",
+                "nowUnix" | "nowMillis" | "fromUnix" | "fromMillis" | "parseUnix" | "year"
+                | "month" | "day" | "hour" | "minute" | "second",
+            ) => Some(IrType::Int),
+            ("random", "seed") => Some(IrType::Void),
+            ("random", "int") => Some(IrType::Int),
+            ("random", "float") => Some(IrType::Float),
+            ("fs", "exists") => Some(IrType::Bool),
+            ("fs", "readText" | "join") => Some(IrType::String),
+            ("fs", "writeText" | "appendText" | "mkdirAll" | "removeFile" | "removeDirAll") => {
+                Some(IrType::Void)
+            }
+            ("os", "cwd" | "platform" | "execShellOut") => Some(IrType::String),
+            ("os", "sleep") => Some(IrType::Void),
+            ("os", "execShell") => Some(IrType::Int),
             _ => None,
         }
     }
@@ -786,6 +820,13 @@ impl IrLowerer {
         self.builder
             .push_instr(func, block, Instr::MakeClosure { dst, function });
         Some(Operand::Temp(dst))
+    }
+
+    fn indirect_call_return_type(&self, func: &crate::ir::IrFunction, callee: &Operand) -> IrType {
+        match self.infer_operand_type(func, callee) {
+            IrType::Fn { ret, .. } => (*ret).clone(),
+            _ => IrType::Unknown,
+        }
     }
 
     fn compile_fn_lit(

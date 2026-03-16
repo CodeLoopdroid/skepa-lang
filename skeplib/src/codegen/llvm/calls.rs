@@ -5,12 +5,8 @@ use crate::ir::{Instr, IrFunction, IrProgram, IrType, Operand, TempId};
 use std::collections::HashMap;
 
 pub fn ensure_supported(instr: &Instr) -> Result<(), CodegenError> {
-    match instr {
-        Instr::CallIndirect { .. } => Err(CodegenError::Unsupported(
-            "indirect calls are not lowered yet",
-        )),
-        _ => Ok(()),
-    }
+    let _ = instr;
+    Ok(())
 }
 
 pub struct DirectCall<'a> {

@@ -1,20 +1,13 @@
 use crate::codegen::CodegenError;
 use crate::codegen::llvm::types::llvm_ty;
-use crate::codegen::llvm::value::{ValueNames, operand_load};
+use crate::codegen::llvm::value::{ValueNames, operand_load, raw_string_ptr};
 use crate::ir::Instr;
 use crate::ir::{BuiltinCall, IrFunction, IrProgram, IrType, TempId};
 use std::collections::HashMap;
 
 pub fn ensure_supported(instr: &Instr) -> Result<(), CodegenError> {
-    match instr {
-        Instr::MakeClosure { .. } => Err(CodegenError::Unsupported(
-            "runtime-backed function values are not lowered until later LLVM milestones",
-        )),
-        Instr::CallBuiltin { builtin, .. } if !is_supported_builtin(builtin) => Err(
-            CodegenError::Unsupported("only str.* builtins are lowered in current LLVM milestone"),
-        ),
-        _ => Ok(()),
-    }
+    let _ = instr;
+    Ok(())
 }
 
 pub fn emit_runtime_decls(_program: &IrProgram, out: &mut Vec<String>) {
@@ -23,18 +16,24 @@ pub fn emit_runtime_decls(_program: &IrProgram, out: &mut Vec<String>) {
     out.push("declare i1 @skp_rt_builtin_str_contains(ptr, ptr)".into());
     out.push("declare i64 @skp_rt_builtin_str_index_of(ptr, ptr)".into());
     out.push("declare ptr @skp_rt_builtin_str_slice(ptr, i64, i64)".into());
+    out.push("declare ptr @skp_rt_call_builtin(ptr, ptr, i64, ptr)".into());
+    out.push("declare ptr @skp_rt_call_function(i32, i64, ptr)".into());
     out.push("declare ptr @skp_rt_value_from_int(i64)".into());
     out.push("declare ptr @skp_rt_value_from_bool(i1)".into());
+    out.push("declare ptr @skp_rt_value_from_float(double)".into());
     out.push("declare ptr @skp_rt_value_from_string(ptr)".into());
     out.push("declare ptr @skp_rt_value_from_array(ptr)".into());
     out.push("declare ptr @skp_rt_value_from_vec(ptr)".into());
     out.push("declare ptr @skp_rt_value_from_struct(ptr)".into());
+    out.push("declare ptr @skp_rt_value_from_function(i32)".into());
     out.push("declare i64 @skp_rt_value_to_int(ptr)".into());
     out.push("declare i1 @skp_rt_value_to_bool(ptr)".into());
+    out.push("declare double @skp_rt_value_to_float(ptr)".into());
     out.push("declare ptr @skp_rt_value_to_string(ptr)".into());
     out.push("declare ptr @skp_rt_value_to_array(ptr)".into());
     out.push("declare ptr @skp_rt_value_to_vec(ptr)".into());
     out.push("declare ptr @skp_rt_value_to_struct(ptr)".into());
+    out.push("declare i32 @skp_rt_value_to_function(ptr)".into());
     out.push("declare ptr @skp_rt_array_new(i64)".into());
     out.push("declare ptr @skp_rt_array_repeat(ptr, i64)".into());
     out.push("declare ptr @skp_rt_array_get(ptr, i64)".into());
@@ -70,11 +69,7 @@ pub fn emit_builtin_call(
         ("str", "contains") => "skp_rt_builtin_str_contains",
         ("str", "indexOf") => "skp_rt_builtin_str_index_of",
         ("str", "slice") => "skp_rt_builtin_str_slice",
-        _ => {
-            return Err(CodegenError::Unsupported(
-                "only str.* builtins are lowered in current LLVM milestone",
-            ));
-        }
+        _ => return emit_builtin_call_generic(func, names, call, lines, counter, string_literals),
     };
 
     let expected = match call.builtin.name.as_str() {
@@ -116,12 +111,75 @@ pub fn emit_builtin_call(
     Ok(())
 }
 
-fn is_supported_builtin(builtin: &BuiltinCall) -> bool {
-    builtin.package == "str"
-        && matches!(
-            builtin.name.as_str(),
-            "len" | "contains" | "indexOf" | "slice"
-        )
+#[allow(clippy::too_many_arguments)]
+fn emit_builtin_call_generic(
+    func: &IrFunction,
+    names: &ValueNames,
+    call: BuiltinCallInstr<'_>,
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<(), CodegenError> {
+    let package_ptr = raw_string_ptr(&call.builtin.package, lines, counter, string_literals)?;
+    let name_ptr = raw_string_ptr(&call.builtin.name, lines, counter, string_literals)?;
+    let argv = emit_boxed_arg_array(func, names, call.args, lines, counter, string_literals)?;
+    let raw = format!("%v{counter}");
+    *counter += 1;
+    lines.push(format!(
+        "  {raw} = call ptr @skp_rt_call_builtin(ptr {package_ptr}, ptr {name_ptr}, i64 {}, ptr {argv})",
+        call.args.len()
+    ));
+    if call.ret_ty.is_void() {
+        return Ok(());
+    }
+    let Some(dst) = call.dst else {
+        return Err(CodegenError::InvalidIr(
+            "non-void builtin call must write to a destination temp".into(),
+        ));
+    };
+    emit_unbox_value(names, dst, call.ret_ty, &raw, lines)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn emit_indirect_call(
+    func: &IrFunction,
+    names: &ValueNames,
+    dst: Option<TempId>,
+    ret_ty: &IrType,
+    callee: &crate::ir::Operand,
+    args: &[crate::ir::Operand],
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<(), CodegenError> {
+    let callee = operand_load(
+        names,
+        callee,
+        func,
+        lines,
+        counter,
+        &IrType::Fn {
+            params: Vec::new(),
+            ret: Box::new(ret_ty.clone()),
+        },
+        string_literals,
+    )?;
+    let argv = emit_boxed_arg_array(func, names, args, lines, counter, string_literals)?;
+    let raw = format!("%v{counter}");
+    *counter += 1;
+    lines.push(format!(
+        "  {raw} = call ptr @skp_rt_call_function(i32 {callee}, i64 {}, ptr {argv})",
+        args.len()
+    ));
+    if ret_ty.is_void() {
+        return Ok(());
+    }
+    let Some(dst) = dst else {
+        return Err(CodegenError::InvalidIr(
+            "non-void indirect call must write to a destination temp".into(),
+        ));
+    };
+    emit_unbox_value(names, dst, ret_ty, &raw, lines)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -546,6 +604,31 @@ pub fn emit_struct_set(
     Ok(())
 }
 
+fn emit_boxed_arg_array(
+    func: &IrFunction,
+    names: &ValueNames,
+    args: &[crate::ir::Operand],
+    lines: &mut Vec<String>,
+    counter: &mut usize,
+    string_literals: &HashMap<String, String>,
+) -> Result<String, CodegenError> {
+    let array = format!("%v{counter}");
+    *counter += 1;
+    let len = args.len().max(1);
+    lines.push(format!("  {array} = alloca ptr, i64 {len}, align 8"));
+    for (index, arg) in args.iter().enumerate() {
+        let arg_ty = infer_operand_type(func, arg);
+        let boxed = emit_boxed_operand(func, names, arg, &arg_ty, lines, counter, string_literals)?;
+        let slot = format!("%v{counter}");
+        *counter += 1;
+        lines.push(format!(
+            "  {slot} = getelementptr inbounds ptr, ptr {array}, i64 {index}"
+        ));
+        lines.push(format!("  store ptr {boxed}, ptr {slot}, align 8"));
+    }
+    Ok(array)
+}
+
 fn emit_boxed_operand(
     func: &IrFunction,
     names: &ValueNames,
@@ -560,14 +643,16 @@ fn emit_boxed_operand(
     *counter += 1;
     let helper = match ty {
         IrType::Int => "skp_rt_value_from_int",
+        IrType::Float => "skp_rt_value_from_float",
         IrType::Bool => "skp_rt_value_from_bool",
         IrType::String => "skp_rt_value_from_string",
         IrType::Array { .. } => "skp_rt_value_from_array",
         IrType::Vec { .. } => "skp_rt_value_from_vec",
         IrType::Named(_) => "skp_rt_value_from_struct",
+        IrType::Fn { .. } => "skp_rt_value_from_function",
         _ => {
             return Err(CodegenError::Unsupported(
-                "boxing is only implemented for Int/Bool/String/Array/Vec/Struct",
+                "boxing is only implemented for Int/Float/Bool/String/Array/Vec/Struct/Function",
             ));
         }
     };
@@ -590,6 +675,9 @@ fn emit_unbox_value(
         IrType::Int => lines.push(format!(
             "  {dest} = call i64 @skp_rt_value_to_int(ptr {raw})"
         )),
+        IrType::Float => lines.push(format!(
+            "  {dest} = call double @skp_rt_value_to_float(ptr {raw})"
+        )),
         IrType::Bool => lines.push(format!(
             "  {dest} = call i1 @skp_rt_value_to_bool(ptr {raw})"
         )),
@@ -605,9 +693,12 @@ fn emit_unbox_value(
         IrType::Named(_) => lines.push(format!(
             "  {dest} = call ptr @skp_rt_value_to_struct(ptr {raw})"
         )),
+        IrType::Fn { .. } => lines.push(format!(
+            "  {dest} = call i32 @skp_rt_value_to_function(ptr {raw})"
+        )),
         _ => {
             return Err(CodegenError::Unsupported(
-                "unboxing is only implemented for Int/Bool/String/Array/Vec/Struct",
+                "unboxing is only implemented for Int/Float/Bool/String/Array/Vec/Struct/Function",
             ));
         }
     }
@@ -617,8 +708,10 @@ fn emit_unbox_value(
 fn infer_operand_type(func: &IrFunction, operand: &crate::ir::Operand) -> IrType {
     match operand {
         crate::ir::Operand::Const(crate::ir::ConstValue::Int(_)) => IrType::Int,
+        crate::ir::Operand::Const(crate::ir::ConstValue::Float(_)) => IrType::Float,
         crate::ir::Operand::Const(crate::ir::ConstValue::Bool(_)) => IrType::Bool,
         crate::ir::Operand::Const(crate::ir::ConstValue::String(_)) => IrType::String,
+        crate::ir::Operand::Const(crate::ir::ConstValue::Unit) => IrType::Void,
         crate::ir::Operand::Temp(id) => func
             .temps
             .iter()
