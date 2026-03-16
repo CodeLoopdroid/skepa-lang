@@ -68,3 +68,26 @@ fn main() -> Int {
     assert!(printed.contains("ArraySet"));
     assert!(printed.contains("ArrayGet"));
 }
+
+#[test]
+fn lower_struct_literal_and_field_ops_to_ir() {
+    let source = r#"
+struct Pair {
+  a: Int,
+  b: Int
+}
+
+fn main() -> Int {
+  let p = Pair { a: 2, b: 3 };
+  p.a = 7;
+  return p.a + p.b;
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    assert_eq!(program.structs.len(), 1);
+    let printed = PrettyIr::new(&program).to_string();
+    assert!(printed.contains("MakeStruct"));
+    assert!(printed.contains("StructSet"));
+    assert!(printed.contains("StructGet"));
+}

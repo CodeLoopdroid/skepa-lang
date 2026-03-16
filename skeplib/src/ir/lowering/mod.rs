@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    AssignTarget, BinaryOp as AstBinaryOp, Expr, FnDecl, Program, Stmt, UnaryOp as AstUnaryOp,
+    AssignTarget, BinaryOp as AstBinaryOp, Expr, FnDecl, Program, Stmt, StructDecl,
+    UnaryOp as AstUnaryOp,
 };
 use crate::diagnostic::{DiagnosticBag, Span};
 use crate::ir::{
@@ -41,6 +42,7 @@ struct IrLowerer {
     diags: DiagnosticBag,
     functions: HashMap<String, (crate::ir::FunctionId, IrType)>,
     globals: HashMap<String, (crate::ir::GlobalId, IrType)>,
+    structs: HashMap<String, (crate::ir::StructId, Vec<crate::ir::StructField>)>,
 }
 
 struct FunctionLowering {
@@ -55,11 +57,24 @@ impl IrLowerer {
             diags: DiagnosticBag::new(),
             functions: HashMap::new(),
             globals: HashMap::new(),
+            structs: HashMap::new(),
         }
     }
 
     fn compile_program(&mut self, program: &Program) -> IrProgram {
         let mut out = self.builder.begin_program();
+
+        for (index, strukt) in program.structs.iter().enumerate() {
+            let id = crate::ir::StructId(index);
+            let fields = self.lower_struct_fields(strukt);
+            self.structs
+                .insert(strukt.name.clone(), (id, fields.clone()));
+            out.structs.push(crate::ir::IrStruct {
+                id,
+                name: strukt.name.clone(),
+                fields,
+            });
+        }
 
         for (index, global) in program.globals.iter().enumerate() {
             let ty = global
@@ -104,6 +119,17 @@ impl IrLowerer {
         }
 
         out
+    }
+
+    fn lower_struct_fields(&self, strukt: &StructDecl) -> Vec<crate::ir::StructField> {
+        strukt
+            .fields
+            .iter()
+            .map(|field| crate::ir::StructField {
+                name: field.name.clone(),
+                ty: IrType::from(&TypeInfo::from_ast(&field.ty)),
+            })
+            .collect()
     }
 
     fn compile_function(&mut self, func: &FnDecl) -> Option<crate::ir::IrFunction> {
@@ -283,6 +309,32 @@ impl IrLowerer {
                 );
                 true
             }
+            Stmt::Assign {
+                target: AssignTarget::Field { base, field },
+                value,
+            } => {
+                let base = match self.compile_expr(func, lowering, base) {
+                    Some(value) => value,
+                    None => return false,
+                };
+                let value = match self.compile_expr(func, lowering, value) {
+                    Some(value) => value,
+                    None => return false,
+                };
+                let ty = self.field_type(func, &base, field);
+                let field_ref = self.resolve_field_ref(func, &base, field);
+                self.builder.push_instr(
+                    func,
+                    lowering.current_block,
+                    Instr::StructSet {
+                        base,
+                        field: field_ref,
+                        value,
+                        ty,
+                    },
+                );
+                true
+            }
             Stmt::Expr(expr) => self.compile_expr(func, lowering, expr).is_some(),
             Stmt::Return(value) => {
                 let ret = match value {
@@ -427,6 +479,23 @@ impl IrLowerer {
                         None
                     })
             }
+            Expr::Field { base, field } => {
+                let base = self.compile_expr(func, lowering, base)?;
+                let ty = self.field_type(func, &base, field);
+                let field_ref = self.resolve_field_ref(func, &base, field);
+                let dst = self.builder.push_temp(func, ty.clone());
+                self.builder.push_instr(
+                    func,
+                    lowering.current_block,
+                    Instr::StructGet {
+                        dst,
+                        ty,
+                        base,
+                        field: field_ref,
+                    },
+                );
+                Some(Operand::Temp(dst))
+            }
             Expr::ArrayLit(items) => {
                 let mut lowered_items = Vec::with_capacity(items.len());
                 for item in items {
@@ -468,6 +537,37 @@ impl IrLowerer {
                         elem_ty,
                         value,
                         size: *size,
+                    },
+                );
+                Some(Operand::Temp(dst))
+            }
+            Expr::StructLit { name, fields } => {
+                let Some((struct_id, struct_fields)) = self.structs.get(name).cloned() else {
+                    self.unsupported(format!("unknown struct `{name}` in IR lowering"));
+                    return None;
+                };
+                let mut ordered = Vec::with_capacity(struct_fields.len());
+                for declared in &struct_fields {
+                    let Some((_, expr)) = fields
+                        .iter()
+                        .find(|(field_name, _)| field_name == &declared.name)
+                    else {
+                        self.unsupported(format!(
+                            "missing field `{}` in struct literal `{name}`",
+                            declared.name
+                        ));
+                        return None;
+                    };
+                    ordered.push(self.compile_expr(func, lowering, expr)?);
+                }
+                let dst = self.builder.push_temp(func, IrType::Named(name.clone()));
+                self.builder.push_instr(
+                    func,
+                    lowering.current_block,
+                    Instr::MakeStruct {
+                        dst,
+                        struct_id,
+                        fields: ordered,
                     },
                 );
                 Some(Operand::Temp(dst))
@@ -584,6 +684,37 @@ impl IrLowerer {
             IrType::Array { elem, .. } => *elem,
             IrType::Vec { elem } => *elem,
             _ => IrType::Unknown,
+        }
+    }
+
+    fn field_type(&self, func: &crate::ir::IrFunction, base: &Operand, field: &str) -> IrType {
+        let IrType::Named(struct_name) = self.infer_operand_type(func, base) else {
+            return IrType::Unknown;
+        };
+        self.structs
+            .get(&struct_name)
+            .and_then(|(_, fields)| fields.iter().find(|entry| entry.name == field))
+            .map(|entry| entry.ty.clone())
+            .unwrap_or(IrType::Unknown)
+    }
+
+    fn resolve_field_ref(
+        &self,
+        func: &crate::ir::IrFunction,
+        base: &Operand,
+        field: &str,
+    ) -> crate::ir::FieldRef {
+        let index = match self.infer_operand_type(func, base) {
+            IrType::Named(struct_name) => self
+                .structs
+                .get(&struct_name)
+                .and_then(|(_, fields)| fields.iter().position(|entry| entry.name == field))
+                .unwrap_or(usize::MAX),
+            _ => usize::MAX,
+        };
+        crate::ir::FieldRef {
+            index,
+            name: field.to_string(),
         }
     }
 
