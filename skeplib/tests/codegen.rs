@@ -661,6 +661,23 @@ fn main() -> Int {
 }
 
 #[test]
+fn codegen_builds_native_executable_for_arr_builtin_family() {
+    let source = r#"
+import arr;
+
+fn main() -> Int {
+  let xs: [Int; 3] = [1, 2, 3];
+  if (arr.isEmpty(xs)) {
+    return 0;
+  }
+  return arr.len(xs) + 4;
+}
+"#;
+
+    assert_eq!(build_and_run_exit_code(source), 7);
+}
+
+#[test]
 fn codegen_builds_native_executable_for_arrays_vecs_and_struct_methods() {
     let source = r#"
 struct Pair {
@@ -685,6 +702,27 @@ fn main() -> Int {
 "#;
 
     assert_eq!(build_and_run_exit_code(source), 7);
+}
+
+#[test]
+fn codegen_rejects_native_globals_and_module_init_with_clear_error() {
+    let source = r#"
+let seed: Int = 4;
+let answer: Int = seed + 3;
+
+fn main() -> Int {
+  return answer;
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let exe_path = temp_file("native_globals_rejected", exe_ext());
+    let err = codegen::compile_program_to_executable(&program, &exe_path)
+        .expect_err("native globals/module-init should still be rejected");
+    assert!(
+        err.to_string()
+            .contains("only Int/Bool/String/Named/Array/Vec/Fn/Void lowering is implemented")
+    );
 }
 
 #[test]
