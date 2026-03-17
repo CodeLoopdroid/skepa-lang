@@ -1,6 +1,6 @@
 use crate::codegen::CodegenError;
 use crate::codegen::llvm::types::llvm_ty;
-use crate::codegen::llvm::value::{ValueNames, operand_load, raw_string_ptr};
+use crate::codegen::llvm::value::{ValueNames, llvm_symbol, operand_load, raw_string_ptr};
 use crate::ir::Instr;
 use crate::ir::{BuiltinCall, IrFunction, IrProgram, IrType, TempId};
 use std::collections::HashMap;
@@ -10,17 +10,17 @@ pub fn ensure_supported(instr: &Instr) -> Result<(), CodegenError> {
     Ok(())
 }
 
-pub fn emit_runtime_decls(_program: &IrProgram, out: &mut Vec<String>) {
+pub fn emit_runtime_decls(program: &IrProgram, out: &mut Vec<String>) -> Result<(), CodegenError> {
     out.push("declare ptr @skp_rt_string_from_utf8(ptr, i64)".into());
     out.push("declare i64 @skp_rt_builtin_str_len(ptr)".into());
     out.push("declare i1 @skp_rt_builtin_str_contains(ptr, ptr)".into());
     out.push("declare i64 @skp_rt_builtin_str_index_of(ptr, ptr)".into());
     out.push("declare ptr @skp_rt_builtin_str_slice(ptr, i64, i64)".into());
     out.push("declare ptr @skp_rt_call_builtin(ptr, ptr, i64, ptr)".into());
-    out.push("declare ptr @skp_rt_call_function(i32, i64, ptr)".into());
     out.push("declare ptr @skp_rt_value_from_int(i64)".into());
     out.push("declare ptr @skp_rt_value_from_bool(i1)".into());
     out.push("declare ptr @skp_rt_value_from_float(double)".into());
+    out.push("declare ptr @skp_rt_value_from_unit()".into());
     out.push("declare ptr @skp_rt_value_from_string(ptr)".into());
     out.push("declare ptr @skp_rt_value_from_array(ptr)".into());
     out.push("declare ptr @skp_rt_value_from_vec(ptr)".into());
@@ -47,6 +47,8 @@ pub fn emit_runtime_decls(_program: &IrProgram, out: &mut Vec<String>) {
     out.push("declare ptr @skp_rt_struct_new(i64, i64)".into());
     out.push("declare ptr @skp_rt_struct_get(ptr, i64)".into());
     out.push("declare void @skp_rt_struct_set(ptr, i64, ptr)".into());
+    emit_indirect_call_dispatch(program, out)?;
+    Ok(())
 }
 
 pub struct BuiltinCallInstr<'a> {
@@ -168,7 +170,7 @@ pub fn emit_indirect_call(
     let raw = format!("%v{counter}");
     *counter += 1;
     lines.push(format!(
-        "  {raw} = call ptr @skp_rt_call_function(i32 {callee}, i64 {}, ptr {argv})",
+        "  {raw} = call ptr @__skp_rt_call_function_dispatch(i32 {callee}, i64 {}, ptr {argv})",
         args.len()
     ));
     if ret_ty.is_void() {
@@ -726,4 +728,135 @@ fn infer_operand_type(func: &IrFunction, operand: &crate::ir::Operand) -> IrType
             .unwrap_or(IrType::Unknown),
         _ => IrType::Unknown,
     }
+}
+
+fn emit_indirect_call_dispatch(
+    program: &IrProgram,
+    out: &mut Vec<String>,
+) -> Result<(), CodegenError> {
+    for func in &program.functions {
+        out.extend(emit_indirect_wrapper(func)?);
+        out.push(String::new());
+    }
+
+    out.push("define internal ptr @__skp_rt_call_function_dispatch(i32 %function, i64 %argc, ptr %argv) {".into());
+    out.push("entry:".into());
+    if program.functions.is_empty() {
+        out.push("  %unit = call ptr @skp_rt_value_from_unit()".into());
+        out.push("  ret ptr %unit".into());
+        out.push("}".into());
+        return Ok(());
+    }
+    let cases = program
+        .functions
+        .iter()
+        .map(|func| format!("    i32 {}, label %case{}", func.id.0, func.id.0))
+        .collect::<Vec<_>>()
+        .join("\n");
+    out.push(format!(
+        "  switch i32 %function, label %default [\n{cases}\n  ]"
+    ));
+    for func in &program.functions {
+        out.push(format!("case{}:", func.id.0));
+        out.push(format!(
+            "  %call{} = call ptr @__skp_rt_fnwrap_{}(i64 %argc, ptr %argv)",
+            func.id.0, func.id.0
+        ));
+        out.push(format!("  ret ptr %call{}", func.id.0));
+    }
+    out.push("default:".into());
+    out.push("  %unit = call ptr @skp_rt_value_from_unit()".into());
+    out.push("  ret ptr %unit".into());
+    out.push("}".into());
+    Ok(())
+}
+
+fn emit_indirect_wrapper(func: &IrFunction) -> Result<Vec<String>, CodegenError> {
+    let mut lines = vec![format!(
+        "define internal ptr @__skp_rt_fnwrap_{}(i64 %argc, ptr %argv) {{",
+        func.id.0
+    )];
+    lines.push("entry:".into());
+    for (index, param) in func.params.iter().enumerate() {
+        lines.push(format!(
+            "  %argslot{index} = getelementptr inbounds ptr, ptr %argv, i64 {index}"
+        ));
+        lines.push(format!(
+            "  %argraw{index} = load ptr, ptr %argslot{index}, align 8"
+        ));
+        match &param.ty {
+            IrType::Int => lines.push(format!(
+                "  %arg{index} = call i64 @skp_rt_value_to_int(ptr %argraw{index})"
+            )),
+            IrType::Float => lines.push(format!(
+                "  %arg{index} = call double @skp_rt_value_to_float(ptr %argraw{index})"
+            )),
+            IrType::Bool => lines.push(format!(
+                "  %arg{index} = call i1 @skp_rt_value_to_bool(ptr %argraw{index})"
+            )),
+            IrType::String => lines.push(format!(
+                "  %arg{index} = call ptr @skp_rt_value_to_string(ptr %argraw{index})"
+            )),
+            IrType::Array { .. } => lines.push(format!(
+                "  %arg{index} = call ptr @skp_rt_value_to_array(ptr %argraw{index})"
+            )),
+            IrType::Vec { .. } => lines.push(format!(
+                "  %arg{index} = call ptr @skp_rt_value_to_vec(ptr %argraw{index})"
+            )),
+            IrType::Named(_) => lines.push(format!(
+                "  %arg{index} = call ptr @skp_rt_value_to_struct(ptr %argraw{index})"
+            )),
+            IrType::Fn { .. } => lines.push(format!(
+                "  %arg{index} = call i32 @skp_rt_value_to_function(ptr %argraw{index})"
+            )),
+            _ => {
+                return Err(CodegenError::Unsupported(
+                    "indirect-call trampoline only supports Int/Float/Bool/String/Named/Array/Vec/Fn/Void signatures",
+                ));
+            }
+        }
+    }
+    let joined_args = func
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, param)| Ok(format!("{} %arg{index}", llvm_ty(&param.ty)?)))
+        .collect::<Result<Vec<_>, CodegenError>>()?
+        .join(", ");
+    if func.ret_ty.is_void() {
+        lines.push(format!(
+            "  call void {}({joined_args})",
+            llvm_symbol(&func.name)
+        ));
+        lines.push("  %unit = call ptr @skp_rt_value_from_unit()".into());
+        lines.push("  ret ptr %unit".into());
+    } else {
+        lines.push(format!(
+            "  %ret = call {} {}({joined_args})",
+            llvm_ty(&func.ret_ty)?,
+            llvm_symbol(&func.name)
+        ));
+        let boxer = match &func.ret_ty {
+            IrType::Int => "skp_rt_value_from_int",
+            IrType::Float => "skp_rt_value_from_float",
+            IrType::Bool => "skp_rt_value_from_bool",
+            IrType::String => "skp_rt_value_from_string",
+            IrType::Array { .. } => "skp_rt_value_from_array",
+            IrType::Vec { .. } => "skp_rt_value_from_vec",
+            IrType::Named(_) => "skp_rt_value_from_struct",
+            IrType::Fn { .. } => "skp_rt_value_from_function",
+            _ => {
+                return Err(CodegenError::Unsupported(
+                    "indirect-call trampoline only supports Int/Float/Bool/String/Named/Array/Vec/Fn/Void signatures",
+                ));
+            }
+        };
+        lines.push(format!(
+            "  %boxed = call ptr @{boxer}({} %ret)",
+            llvm_ty(&func.ret_ty)?
+        ));
+        lines.push("  ret ptr %boxed".into());
+    }
+    lines.push("}".into());
+    Ok(lines)
 }

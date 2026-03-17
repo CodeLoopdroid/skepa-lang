@@ -101,7 +101,7 @@ impl<'a> LlvmEmitter<'a> {
             out.push(String::new());
         }
 
-        runtime::emit_runtime_decls(self.program, &mut out);
+        runtime::emit_runtime_decls(self.program, &mut out)?;
         out.push(String::new());
 
         for func in &self.program.functions {
@@ -782,6 +782,54 @@ fn collect_instr_string_literals(
             for arg in args {
                 add_operand(arg);
             }
+        }
+        Instr::MakeArray { items, .. } => {
+            for item in items {
+                add_operand(item);
+            }
+        }
+        Instr::MakeArrayRepeat { value, .. } => add_operand(value),
+        Instr::ArrayGet { array, index, .. }
+        | Instr::VecGet {
+            vec: array, index, ..
+        } => {
+            add_operand(array);
+            add_operand(index);
+        }
+        Instr::StructGet { base, .. } => add_operand(base),
+        Instr::ArraySet {
+            array,
+            index,
+            value,
+            ..
+        }
+        | Instr::VecSet {
+            vec: array,
+            index,
+            value,
+            ..
+        } => {
+            add_operand(array);
+            add_operand(index);
+            add_operand(value);
+        }
+        Instr::VecPush { vec, value, .. } => {
+            add_operand(vec);
+            add_operand(value);
+        }
+        Instr::VecDelete { vec, index, .. } => {
+            add_operand(vec);
+            add_operand(index);
+        }
+        Instr::VecLen { vec, .. } => add_operand(vec),
+        Instr::MakeStruct { fields, .. } => {
+            for field in fields {
+                add_operand(field);
+            }
+        }
+        Instr::StructSet { base, value, .. } => {
+            add_operand(base);
+            add_operand(value);
         }
         Instr::MakeClosure { .. } => {}
         _ => {}

@@ -519,8 +519,8 @@ fn main() -> Int {
     let llvm_ir =
         codegen::compile_program_to_llvm_ir(&program).expect("LLVM lowering should succeed");
 
-    assert!(llvm_ir.contains("declare ptr @skp_rt_call_function(i32, i64, ptr)"));
-    assert!(llvm_ir.contains("call ptr @skp_rt_call_function("));
+    assert!(llvm_ir.contains("define internal ptr @__skp_rt_call_function_dispatch("));
+    assert!(llvm_ir.contains("call ptr @__skp_rt_call_function_dispatch("));
     assert!(llvm_ir.contains("declare ptr @skp_rt_value_from_function(i32)"));
     assert!(llvm_ir.contains("declare i32 @skp_rt_value_to_function(ptr)"));
 
@@ -543,6 +543,22 @@ fn main() -> Int {
         "llvm-as rejected generated IR: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn codegen_builds_native_executable_for_indirect_calls() {
+    let source = r#"
+fn step(x: Int) -> Int {
+  return x + 3;
+}
+
+fn main() -> Int {
+  let f: Fn(Int) -> Int = step;
+  return f(4);
+}
+"#;
+
+    assert_eq!(build_and_run_exit_code(source), 7);
 }
 
 #[test]
@@ -705,7 +721,7 @@ fn main() -> Int {
 }
 
 #[test]
-fn codegen_rejects_native_globals_and_module_init_with_clear_error() {
+fn codegen_builds_native_executable_for_globals_and_module_init() {
     let source = r#"
 let seed: Int = 4;
 let answer: Int = seed + 3;
@@ -715,14 +731,7 @@ fn main() -> Int {
 }
 "#;
 
-    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
-    let exe_path = temp_file("native_globals_rejected", exe_ext());
-    let err = codegen::compile_program_to_executable(&program, &exe_path)
-        .expect_err("native globals/module-init should still be rejected");
-    assert!(
-        err.to_string()
-            .contains("only Int/Bool/String/Named/Array/Vec/Fn/Void lowering is implemented")
-    );
+    assert_eq!(build_and_run_exit_code(source), 7);
 }
 
 #[test]

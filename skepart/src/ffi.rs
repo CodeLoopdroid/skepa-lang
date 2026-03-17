@@ -111,6 +111,11 @@ pub extern "C" fn skp_rt_value_from_float(value: f64) -> *mut RtValue {
 }
 
 #[no_mangle]
+pub extern "C" fn skp_rt_value_from_unit() -> *mut RtValue {
+    boxed_value(RtValue::Unit)
+}
+
+#[no_mangle]
 pub extern "C" fn skp_rt_value_from_string(value: *mut RtString) -> *mut RtValue {
     assert!(!value.is_null(), "string pointer must not be null");
     // SAFETY: caller passes a valid runtime string pointer.

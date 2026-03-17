@@ -341,7 +341,12 @@ impl IrLowerer {
                 .find(|local| local.id == *id)
                 .map(|local| local.ty.clone())
                 .unwrap_or(IrType::Unknown),
-            Operand::Global(_) => IrType::Unknown,
+            Operand::Global(id) => self
+                .globals
+                .values()
+                .find(|(global_id, _)| global_id == id)
+                .map(|(_, ty)| ty.clone())
+                .unwrap_or(IrType::Unknown),
         }
     }
 
