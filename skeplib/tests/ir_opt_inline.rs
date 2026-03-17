@@ -1,0 +1,62 @@
+use skeplib::ir::{self, IrValue, PrettyIr};
+
+#[test]
+fn inlining_removes_trivial_direct_calls_and_methods() {
+    let source = r#"
+struct Pair {
+  a: Int,
+  b: Int
+}
+
+fn step(x: Int) -> Int {
+  return x + 1;
+}
+
+impl Pair {
+  fn mix(self, x: Int) -> Int {
+    return self.a + x + self.b;
+  }
+}
+
+fn main() -> Int {
+  let p = Pair { a: 10, b: 5 };
+  return step(p.mix(7));
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let value = ir::IrInterpreter::new(&program)
+        .run_main()
+        .expect("IR interpreter should run optimized source");
+    assert_eq!(value, IrValue::Int(23));
+
+    let printed = PrettyIr::new(&program).to_string();
+    assert!(!printed.contains("CallDirect"));
+}
+
+#[test]
+fn inlining_handles_direct_method_stress_without_changing_result() {
+    let source = r#"
+struct Pair {
+  a: Int,
+  b: Int
+}
+
+impl Pair {
+  fn mix(self, x: Int) -> Int {
+    return self.a + self.b + x;
+  }
+}
+
+fn main() -> Int {
+  let p = Pair { a: 2, b: 3 };
+  return p.mix(1) + p.mix(2) + p.mix(3);
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let value = ir::IrInterpreter::new(&program)
+        .run_main()
+        .expect("IR interpreter should run optimized source");
+    assert_eq!(value, IrValue::Int(21));
+}
