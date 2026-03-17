@@ -13,6 +13,25 @@ fn temp_file(name: &str, ext: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("skepa_codegen_{name}_{nanos}.{ext}"))
 }
 
+fn build_and_run_exit_code(source: &str) -> i32 {
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let exe_path = temp_file("native_codegen_run", exe_ext());
+
+    codegen::compile_program_to_executable(&program, &exe_path)
+        .expect("native executable build should succeed");
+
+    let output = Command::new(&exe_path)
+        .output()
+        .expect("built executable should run");
+
+    let _ = fs::remove_file(&exe_path);
+
+    output
+        .status
+        .code()
+        .expect("native executable should produce an exit code")
+}
+
 #[test]
 fn llvm_codegen_emits_valid_int_only_module() {
     let source = r#"
@@ -548,6 +567,94 @@ fn main() -> Int {
         .expect("built executable should run");
 
     let _ = fs::remove_file(&exe_path);
+
+    assert_eq!(output.status.code(), Some(7));
+}
+
+#[test]
+fn codegen_builds_native_executable_for_string_and_arr_builtins() {
+    let source = r#"
+import str;
+
+fn main() -> Int {
+  let s = "alpha-beta";
+  return str.len(s) + str.indexOf(s, "beta");
+}
+"#;
+
+    assert_eq!(build_and_run_exit_code(source), 16);
+}
+
+#[test]
+fn codegen_builds_native_executable_for_arrays_vecs_and_struct_methods() {
+    let source = r#"
+struct Pair {
+  a: Int,
+  b: Int
+}
+
+impl Pair {
+  fn total(self) -> Int {
+    return self.a + self.b;
+  }
+}
+
+fn main() -> Int {
+  let arr: [Int; 2] = [2; 2];
+  let xs: Vec[Int] = vec.new();
+  vec.push(xs, arr[0]);
+  vec.push(xs, arr[1] + 3);
+  let p = Pair { a: vec.get(xs, 0), b: vec.get(xs, 1) };
+  return p.total();
+}
+"#;
+
+    assert_eq!(build_and_run_exit_code(source), 7);
+}
+
+#[test]
+fn codegen_builds_native_project_entry_wrapper_executable() {
+    let dir = temp_file("project_native_runtime", "dir");
+    fs::create_dir_all(&dir).expect("temporary project dir should be created");
+    let util_dir = dir.join("util");
+    fs::create_dir_all(&util_dir).expect("temporary util dir should be created");
+    let entry = dir.join("main.sk");
+    fs::write(
+        util_dir.join("math.sk"),
+        r#"
+fn add(a: Int, b: Int) -> Int {
+  return a + b;
+}
+
+export { add };
+"#,
+    )
+    .expect("util source should be written");
+    fs::write(
+        &entry,
+        r#"
+from util.math import add;
+
+fn main() -> Int {
+  return add(3, 4);
+}
+"#,
+    )
+    .expect("entry source should be written");
+
+    let program =
+        ir::lowering::compile_project_entry(&entry).expect("project IR lowering should succeed");
+    let exe_path = temp_file("project_native_runtime", exe_ext());
+
+    codegen::compile_program_to_executable(&program, &exe_path)
+        .expect("native executable build should succeed");
+
+    let output = Command::new(&exe_path)
+        .output()
+        .expect("built executable should run");
+
+    let _ = fs::remove_file(&exe_path);
+    let _ = fs::remove_dir_all(&dir);
 
     assert_eq!(output.status.code(), Some(7));
 }
