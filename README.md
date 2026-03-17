@@ -70,3 +70,9 @@ Use these native-first commands instead:
 - `examples/modules_fn_struct/`
 
 For full language/module reference, see `DOCS.md`.
+
+## Contributing
+
+See [`.github/CONTRIBUTING.md`](./.github/CONTRIBUTING.md) for contribution workflow and commit message guidance.
+
+See [`TESTING.md`](./TESTING.md) for testing expectations and validation commands.
