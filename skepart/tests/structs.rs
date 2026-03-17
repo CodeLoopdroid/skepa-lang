@@ -1,0 +1,48 @@
+use skepart::{RtErrorKind, RtFunctionRef, RtStruct, RtStructLayout, RtValue};
+use std::rc::Rc;
+
+#[test]
+fn structs_support_named_and_indexed_field_access() {
+    let mut strukt = RtStruct::new(
+        Rc::new(RtStructLayout {
+            name: "Pair".into(),
+            field_names: vec!["a".into(), "b".into()],
+        }),
+        vec![RtValue::Int(1), RtValue::Function(RtFunctionRef(9))],
+    );
+    assert_eq!(strukt.get_field(0), Ok(RtValue::Int(1)));
+    assert_eq!(
+        strukt.get_named_field("b"),
+        Ok(RtValue::Function(RtFunctionRef(9)))
+    );
+    strukt
+        .set_field(0, RtValue::Int(7))
+        .expect("set field should work");
+    assert_eq!(strukt.get_named_field("a"), Ok(RtValue::Int(7)));
+}
+
+#[test]
+fn structs_report_missing_field_and_layout_mismatches() {
+    let strukt = RtStruct::new(
+        Rc::new(RtStructLayout {
+            name: "Only".into(),
+            field_names: vec!["x".into()],
+        }),
+        vec![RtValue::Int(1)],
+    );
+    assert_eq!(
+        strukt.get_field(2).expect_err("bad index").kind,
+        RtErrorKind::MissingField
+    );
+    assert_eq!(
+        strukt.get_named_field("y").expect_err("bad name").kind,
+        RtErrorKind::MissingField
+    );
+}
+
+#[test]
+fn structs_can_nest_other_struct_values() {
+    let inner = RtStruct::named("Inner", vec![RtValue::Int(2)]);
+    let outer = RtStruct::named("Outer", vec![RtValue::Struct(inner.clone())]);
+    assert_eq!(outer.get_field(0), Ok(RtValue::Struct(inner)));
+}
