@@ -120,6 +120,59 @@ fn main() -> Int {
 }
 
 #[test]
+fn run_reports_runtime_failure_for_division_by_zero() {
+    let tmp = make_temp_dir("skepac_run_div_zero");
+    let source = tmp.join("main.sk");
+    fs::write(
+        &source,
+        r#"
+fn main() -> Int {
+  let x = 1 / 0;
+  return x;
+}
+"#,
+    )
+    .expect("write source");
+
+    let output = Command::new(skepac_bin())
+        .arg("run")
+        .arg(&source)
+        .output()
+        .expect("run skepac run");
+
+    assert!(!output.status.success(), "{:?}", output);
+}
+
+#[test]
+fn run_reports_runtime_failure_for_array_out_of_bounds() {
+    let tmp = make_temp_dir("skepac_run_array_oob");
+    let source = tmp.join("main.sk");
+    fs::write(
+        &source,
+        r#"
+fn main() -> Int {
+  let xs: [Int; 2] = [1, 2];
+  return xs[9];
+}
+"#,
+    )
+    .expect("write source");
+
+    let output = Command::new(skepac_bin())
+        .arg("run")
+        .arg(&source)
+        .output()
+        .expect("run skepac run");
+
+    assert!(!output.status.success(), "{:?}", output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("out of bounds") || stderr.contains("index") || stderr.contains("panic"),
+        "stderr was: {stderr}"
+    );
+}
+
+#[test]
 fn build_llvm_ir_writes_ir_artifact() {
     let tmp = make_temp_dir("skepac_build_ll");
     let source = tmp.join("main.sk");

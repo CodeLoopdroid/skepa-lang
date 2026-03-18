@@ -9,3 +9,4 @@ target_bench_tmp/
 tmp_*.sk
 tmp_*.txt
 temp_*
+tmp_*

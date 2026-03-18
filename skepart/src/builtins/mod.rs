@@ -10,7 +10,7 @@ pub mod vec;
 use crate::{NoopHost, RtError, RtErrorKind, RtHost, RtResult, RtValue};
 
 pub fn call(package: &str, name: &str, args: &[RtValue]) -> RtResult<RtValue> {
-    let mut host = NoopHost;
+    let mut host = NoopHost::default();
     call_with_host(&mut host, package, name, args)
 }
 

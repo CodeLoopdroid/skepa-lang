@@ -759,6 +759,83 @@ fn main() -> Int {
 }
 
 #[test]
+fn codegen_builds_native_executable_for_random_builtins() {
+    let source = r#"
+import random;
+
+fn main() -> Int {
+  random.seed(7);
+  let a = random.int(1, 10);
+  random.seed(7);
+  let b = random.int(1, 10);
+  if (a == b) {
+    return 0;
+  }
+  return 1;
+}
+"#;
+
+    assert_eq!(build_and_run_exit_code(source), 0);
+}
+
+#[test]
+fn codegen_builds_native_executable_for_fs_and_os_builtins() {
+    let dir = temp_file("native_fs_os", "dir");
+    fs::create_dir_all(&dir).expect("temporary dir should be created");
+    let path = dir.join("note.txt");
+    let path_text = path.to_string_lossy().replace('\\', "\\\\");
+    let joined_left = dir.to_string_lossy().replace('\\', "\\\\");
+    let shell = if cfg!(windows) {
+        "echo hi"
+    } else {
+        "printf hi"
+    };
+
+    let source = format!(
+        r#"
+import fs;
+import io;
+import os;
+import str;
+
+fn main() -> Int {{
+  fs.writeText("{path_text}", "a");
+  fs.appendText("{path_text}", "b");
+  let text = fs.readText("{path_text}");
+  let joined = fs.join("{joined_left}", "note.txt");
+  let cwd = os.cwd();
+  let platform = os.platform();
+  let shell = os.execShellOut("{shell}");
+  io.print(text);
+  io.println("");
+  io.print(shell);
+  io.println("");
+  if (fs.exists("{path_text}") && str.len(text) == 2 && str.contains(joined, "note.txt") && str.len(cwd) > 0 && str.len(platform) > 0) {{
+    return 0;
+  }}
+  return 1;
+}}
+"#
+    );
+
+    let output = build_and_run_output(&source);
+    let _ = fs::remove_file(&path);
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("ab"),
+        "expected fs output, got: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("hi"),
+        "expected shell output, got: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
 fn codegen_builds_native_project_entry_wrapper_executable() {
     let dir = temp_file("project_native_runtime", "dir");
     fs::create_dir_all(&dir).expect("temporary project dir should be created");

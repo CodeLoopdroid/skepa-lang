@@ -342,7 +342,7 @@ pub extern "C" fn skp_rt_call_builtin(
             .map(|arg| clone_value(*arg))
             .collect()
     };
-    let mut host = NoopHost;
+    let mut host = NoopHost::default();
     let value = builtins::call_with_host(&mut host, &package, &name, &args)
         .expect("runtime builtin call should succeed");
     boxed_value(value)

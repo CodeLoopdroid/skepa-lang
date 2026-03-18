@@ -68,7 +68,7 @@ pub struct IrInterpreter<'a> {
 
 impl<'a> IrInterpreter<'a> {
     pub fn new(program: &'a IrProgram) -> Self {
-        Self::with_host(program, Box::new(NoopHost))
+        Self::with_host(program, Box::new(NoopHost::default()))
     }
 
     pub fn with_host(program: &'a IrProgram, host: Box<dyn RtHost>) -> Self {

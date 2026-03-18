@@ -24,7 +24,7 @@ fn builtins_dispatch_valid_core_families() {
 
 #[test]
 fn builtins_report_unknown_family_arity_and_type_errors() {
-    let mut host = NoopHost;
+    let mut host = NoopHost::default();
     assert_eq!(
         builtins::call("missing", "fn", &[])
             .expect_err("bad family")
@@ -44,14 +44,9 @@ fn builtins_report_unknown_family_arity_and_type_errors() {
         RtErrorKind::TypeMismatch
     );
     assert_eq!(
-        builtins::call_with_host(
-            &mut host,
-            "random",
-            "int",
-            &[RtValue::Int(1), RtValue::Int(2)]
-        )
-        .expect_err("unsupported host")
-        .kind,
+        builtins::call_with_host(&mut host, "datetime", "fromUnix", &[RtValue::Int(2)])
+            .expect_err("unsupported host")
+            .kind,
         RtErrorKind::UnsupportedBuiltin
     );
 }

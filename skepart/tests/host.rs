@@ -5,7 +5,7 @@ use skepart::{NoopHost, RtHost, RtString};
 
 #[test]
 fn noop_host_supports_print_and_time_defaults() {
-    let mut host = NoopHost;
+    let mut host = NoopHost::default();
     host.io_print("hello").expect("print");
     host.io_println("world").expect("println");
     assert!(host.datetime_now_unix().expect("unix") > 0);
