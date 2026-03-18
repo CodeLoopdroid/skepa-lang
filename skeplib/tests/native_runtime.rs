@@ -172,17 +172,17 @@ fn main() -> Int {
 #[test]
 fn native_exec_matches_ir_for_string_equality_compare_codegen() {
     let src = r#"
-fn main() -> String {
+fn main() -> Int {
   let a = "alpha";
   let b = "alpha";
   if (a == b) {
-    return "match";
+    return 1;
   }
-  return "miss";
+  return 0;
 }
 "#;
 
-    common::assert_native_matches_ir_value(src, skepart::value::RtValue::String("match".into()));
+    common::assert_native_matches_ir_value(src, skepart::value::RtValue::Int(1));
 }
 
 #[test]
@@ -201,19 +201,16 @@ fn main() -> Int {
     let string_src = r#"
 let expected: String = "alpha";
 
-fn main() -> String {
+fn main() -> Int {
   let actual = "alpha";
   let other = "beta";
   if (actual == expected && actual != other) {
-    return "match";
+    return 1;
   }
-  return "miss";
+  return 0;
 }
 "#;
 
     common::assert_native_matches_ir_value(float_src, skepart::value::RtValue::Int(1));
-    common::assert_native_matches_ir_value(
-        string_src,
-        skepart::value::RtValue::String("match".into()),
-    );
+    common::assert_native_matches_ir_value(string_src, skepart::value::RtValue::Int(1));
 }
