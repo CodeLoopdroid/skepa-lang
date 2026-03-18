@@ -74,6 +74,7 @@ fn main() -> Int {
 #[test]
 fn optimizer_handles_benchmark_shaped_mixed_program_without_changing_result() {
     let source = r#"
+import io;
 import str;
 
 struct Pair {
@@ -150,11 +151,14 @@ fn struct_work(n: Int) -> Int {
 }
 
 fn main() -> Int {
-  return arithmetic_work(120)
+  let total = arithmetic_work(120)
     + call_work(70)
     + array_work(64)
     + string_work(12)
     + struct_work(30);
+  io.printInt(total);
+  io.println("");
+  return 0;
 }
 "#;
 
@@ -162,8 +166,8 @@ fn main() -> Int {
     let value = ir::IrInterpreter::new(&program)
         .run_main()
         .expect("IR interpreter should run optimized source");
-    assert_eq!(value, IrValue::Int(8850));
-    assert_eq!(common::native_run_exit_code_ok(source), 8850);
+    assert_eq!(value, IrValue::Int(0));
+    assert_eq!(common::native_run_printed_int_ok(source), 8850);
 
     let printed = PrettyIr::new(&program).to_string();
     assert!(!printed.contains("Copy {"));

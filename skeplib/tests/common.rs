@@ -106,6 +106,20 @@ pub fn native_run_exit_code_ok(src: &str) -> i32 {
         .expect("native executable should produce an exit code")
 }
 
+pub fn native_run_printed_int_ok(src: &str) -> i64 {
+    let output = native_run_ok(src);
+    assert!(
+        output.status.success(),
+        "native executable should exit successfully, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .trim()
+        .parse::<i64>()
+        .unwrap_or_else(|_| panic!("expected integer stdout, got `{stdout}`"))
+}
+
 pub fn native_run_project_ok(entry: &Path) -> Output {
     let program = compile_project_ir_ok(entry);
     native_run_program(&program)

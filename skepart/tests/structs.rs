@@ -41,6 +41,31 @@ fn structs_report_missing_field_and_layout_mismatches() {
 }
 
 #[test]
+fn structs_report_set_field_out_of_range_and_named_layout_mismatch() {
+    let mut strukt = RtStruct::new(
+        Rc::new(RtStructLayout {
+            name: "Mismatch".into(),
+            field_names: vec!["left".into(), "right".into()],
+        }),
+        vec![RtValue::Int(1)],
+    );
+    assert_eq!(
+        strukt
+            .set_field(1, RtValue::Int(2))
+            .expect_err("set out of range")
+            .kind,
+        RtErrorKind::MissingField
+    );
+    assert_eq!(
+        strukt
+            .get_named_field("right")
+            .expect_err("named layout mismatch")
+            .kind,
+        RtErrorKind::MissingField
+    );
+}
+
+#[test]
 fn structs_can_nest_other_struct_values() {
     let inner = RtStruct::named("Inner", vec![RtValue::Int(2)]);
     let outer = RtStruct::named("Outer", vec![RtValue::Struct(inner.clone())]);
