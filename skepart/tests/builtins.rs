@@ -1,6 +1,6 @@
 mod common;
 
-use common::RecordingHost;
+use common::{RecordingHost, RecordingHostBuilder};
 use skepart::{builtins, NoopHost, RtErrorKind, RtString, RtValue};
 
 #[test]
@@ -107,7 +107,9 @@ fn builtins_cover_more_io_arr_and_vec_edge_shapes() {
 
 #[test]
 fn builtins_cover_host_backed_fs_os_and_random_families_more_thoroughly() {
-    let mut host = RecordingHost::seeded();
+    let mut host = RecordingHostBuilder::seeded()
+        .file("note.txt", "seed-note")
+        .build();
 
     assert_eq!(
         builtins::call_with_host(
@@ -127,7 +129,7 @@ fn builtins_cover_host_backed_fs_os_and_random_families_more_thoroughly() {
             &[RtValue::String(RtString::from("note.txt"))],
         )
         .expect("fs read"),
-        RtValue::String(RtString::from("read:note.txt"))
+        RtValue::String(RtString::from("seed-note"))
     );
     builtins::call_with_host(
         &mut host,
@@ -217,7 +219,10 @@ fn builtins_cover_host_backed_fs_os_and_random_families_more_thoroughly() {
 
 #[test]
 fn builtins_cover_datetime_component_and_parse_shapes() {
-    let mut host = RecordingHost::seeded();
+    let mut host = RecordingHostBuilder::seeded()
+        .unix_now(111)
+        .millis_now(222)
+        .build();
 
     assert_eq!(
         builtins::call_with_host(&mut host, "datetime", "fromUnix", &[RtValue::Int(5)],)

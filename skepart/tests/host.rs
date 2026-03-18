@@ -1,6 +1,6 @@
 mod common;
 
-use common::RecordingHost;
+use common::{RecordingHost, RecordingHostBuilder};
 use skepart::{NoopHost, RtHost, RtString};
 
 #[test]
@@ -34,7 +34,10 @@ fn recording_host_captures_output_and_overrides_services() {
 
 #[test]
 fn recording_host_tracks_fs_os_and_random_side_effects() {
-    let mut host = RecordingHost::seeded();
+    let mut host = RecordingHostBuilder::seeded()
+        .file("f.txt", "seed")
+        .existing_path("dir", true)
+        .build();
     assert_eq!(host.random_int(1, 9).expect("rand int"), 5);
     assert_eq!(host.random_float().expect("rand float"), 0.25);
     assert!(host.fs_exists("exists.txt").expect("exists"));

@@ -1,22 +1,26 @@
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+
+mod common;
+
+use common::{
+    CliFailureClass, assert_cli_failure_class, assert_diag_code_and_message, exe_ext,
+    make_temp_dir, obj_ext, skepac_bin, write_temp_file,
+};
 
 #[test]
 fn check_valid_program_returns_zero() {
     let tmp = make_temp_dir("skepac_ok");
-    let file = tmp.join("ok.sk");
-    fs::write(
-        &file,
+    let file = write_temp_file(
+        &tmp,
+        "ok.sk",
         r#"
 import io;
 fn main() -> Int {
   return 0;
 }
 "#,
-    )
-    .expect("write fixture");
+    );
 
     let output = Command::new(skepac_bin())
         .arg("check")
@@ -31,26 +35,28 @@ fn main() -> Int {
 #[test]
 fn check_invalid_program_returns_non_zero() {
     let tmp = make_temp_dir("skepac_bad");
-    let file = tmp.join("bad.sk");
-    fs::write(
-        &file,
+    let file = write_temp_file(
+        &tmp,
+        "bad.sk",
         r#"
 fn main() -> Int {
   return 0
 }
 "#,
-    )
-    .expect("write fixture");
+    );
 
     let output = Command::new(skepac_bin())
         .arg("check")
         .arg(&file)
         .output()
         .expect("run skepac");
-    assert_eq!(output.status.code(), Some(10));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Expected `;` after return statement"));
-    assert!(stderr.contains("[E-PARSE][parse]"));
+    assert_cli_failure_class(&output, CliFailureClass::Parse);
+    assert_diag_code_and_message(
+        &stderr,
+        "[E-PARSE][parse]",
+        "Expected `;` after return statement",
+    );
 }
 
 #[test]
@@ -72,15 +78,15 @@ fn main() -> Int {
         .arg(&file)
         .output()
         .expect("run skepac");
-    assert_eq!(output.status.code(), Some(11));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("[E-SEMA][sema]"));
+    assert_cli_failure_class(&output, CliFailureClass::Sema);
+    assert_diag_code_and_message(&stderr, "[E-SEMA][sema]", "Return type mismatch");
 }
 
 #[test]
 fn check_without_arguments_shows_usage_and_fails() {
     let output = Command::new(skepac_bin()).output().expect("run skepac");
-    assert_eq!(output.status.code(), Some(2));
+    assert_cli_failure_class(&output, CliFailureClass::Usage);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Usage: skepac check <entry.sk> | skepac run <entry.sk> | skepac build-native <entry.sk> <out.exe> | skepac build-obj <entry.sk> <out.obj> | skepac build-llvm-ir <entry.sk> <out.ll>"));
 }
@@ -91,7 +97,7 @@ fn unknown_command_fails() {
         .arg("wat")
         .output()
         .expect("run skepac");
-    assert_eq!(output.status.code(), Some(2));
+    assert_cli_failure_class(&output, CliFailureClass::Usage);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Unknown command"));
 }
@@ -140,7 +146,7 @@ fn main() -> Int {
         .output()
         .expect("run skepac run");
 
-    assert!(!output.status.success(), "{:?}", output);
+    assert_cli_failure_class(&output, CliFailureClass::Runtime);
 }
 
 #[test]
@@ -164,7 +170,7 @@ fn main() -> Int {
         .output()
         .expect("run skepac run");
 
-    assert!(!output.status.success(), "{:?}", output);
+    assert_cli_failure_class(&output, CliFailureClass::Runtime);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("out of bounds") || stderr.contains("index") || stderr.contains("panic"),
@@ -207,9 +213,9 @@ fn missing_file_fails() {
         .arg("does_not_exist.sk")
         .output()
         .expect("run skepac");
-    assert_eq!(output.status.code(), Some(3));
+    assert_cli_failure_class(&output, CliFailureClass::Io);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Failed to read"));
+    assert_diag_code_and_message(&stderr, "", "Failed to read");
 }
 
 #[test]
@@ -594,9 +600,8 @@ fn main() -> Int {
         .output()
         .expect("run skepac build-obj");
 
-    assert_eq!(output.status.code(), Some(12), "{:?}", output);
+    assert_cli_failure_class(&output, CliFailureClass::Codegen);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("[E-CODEGEN][codegen]"));
     assert!(stderr.contains("native toolchain failure"));
     assert!(stderr.contains("llvm-as") || stderr.contains("llc"));
 }
@@ -624,31 +629,8 @@ fn main() -> Int {
         .output()
         .expect("run skepac build-native");
 
-    assert_eq!(output.status.code(), Some(12), "{:?}", output);
+    assert_cli_failure_class(&output, CliFailureClass::Codegen);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("[E-CODEGEN][codegen]"));
     assert!(stderr.contains("native toolchain failure"));
     assert!(stderr.contains("llvm-as") || stderr.contains("llc") || stderr.contains("clang"));
-}
-
-fn skepac_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_skepac")
-}
-
-fn make_temp_dir(prefix: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("{prefix}_{nanos}"));
-    fs::create_dir_all(&dir).expect("create temp dir");
-    dir
-}
-
-fn obj_ext() -> &'static str {
-    if cfg!(windows) { "obj" } else { "o" }
-}
-
-fn exe_ext() -> &'static str {
-    if cfg!(windows) { "exe" } else { "out" }
 }

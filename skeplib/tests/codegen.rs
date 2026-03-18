@@ -5,6 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use skeplib::codegen;
 use skeplib::ir;
 
+#[path = "common.rs"]
+mod common;
+
 fn temp_file(name: &str, ext: &str) -> std::path::PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -47,6 +50,29 @@ fn build_and_run_output(source: &str) -> std::process::Output {
     output
 }
 
+fn assemble_llvm_ir(llvm_ir: &str, label: &str) {
+    common::require_llvm_tool("llvm-as");
+    let ll_path = temp_file(label, "ll");
+    let bc_path = temp_file(label, "bc");
+    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
+
+    let output = Command::new("llvm-as")
+        .arg(&ll_path)
+        .arg("-o")
+        .arg(&bc_path)
+        .output()
+        .expect("llvm-as should be available on PATH");
+
+    let _ = fs::remove_file(&ll_path);
+    let _ = fs::remove_file(&bc_path);
+
+    assert!(
+        output.status.success(),
+        "llvm-as rejected generated IR: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn llvm_codegen_emits_valid_int_only_module() {
     let source = r#"
@@ -69,25 +95,7 @@ fn main() -> Int {
     assert!(llvm_ir.contains("icmp slt"));
     assert!(llvm_ir.contains("br i1"));
 
-    let ll_path = temp_file("valid", "ll");
-    let bc_path = temp_file("valid", "bc");
-    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
-
-    let output = Command::new("llvm-as")
-        .arg(&ll_path)
-        .arg("-o")
-        .arg(&bc_path)
-        .output()
-        .expect("llvm-as should be available on PATH");
-
-    let _ = fs::remove_file(&ll_path);
-    let _ = fs::remove_file(&bc_path);
-
-    assert!(
-        output.status.success(),
-        "llvm-as rejected generated IR: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assemble_llvm_ir(&llvm_ir, "valid");
 }
 
 #[test]

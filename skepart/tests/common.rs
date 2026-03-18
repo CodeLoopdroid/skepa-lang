@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+
+use std::collections::HashMap;
+
 use skepart::{RtHost, RtResult, RtString};
 
 #[derive(Default)]
@@ -12,6 +16,8 @@ pub struct RecordingHost {
     pub read_line: String,
     pub shell_status: i64,
     pub shell_out: String,
+    pub files: HashMap<String, String>,
+    pub existing_paths: HashMap<String, bool>,
 }
 
 impl RecordingHost {
@@ -26,8 +32,88 @@ impl RecordingHost {
             read_line: "typed line".into(),
             shell_status: 9,
             shell_out: "shell-out".into(),
+            files: HashMap::from([(String::from("exists.txt"), String::from("seeded"))]),
+            existing_paths: HashMap::from([(String::from("exists.txt"), true)]),
             ..Self::default()
         }
+    }
+}
+
+#[derive(Default)]
+pub struct RecordingHostBuilder {
+    host: RecordingHost,
+}
+
+impl RecordingHostBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn seeded() -> Self {
+        Self {
+            host: RecordingHost::seeded(),
+        }
+    }
+
+    pub fn unix_now(mut self, value: i64) -> Self {
+        self.host.unix_now = value;
+        self
+    }
+
+    pub fn millis_now(mut self, value: i64) -> Self {
+        self.host.millis_now = value;
+        self
+    }
+
+    pub fn random_int(mut self, value: i64) -> Self {
+        self.host.random_int_value = value;
+        self
+    }
+
+    pub fn random_float(mut self, value: f64) -> Self {
+        self.host.random_float_value = value;
+        self
+    }
+
+    pub fn cwd(mut self, value: impl Into<String>) -> Self {
+        self.host.cwd = value.into();
+        self
+    }
+
+    pub fn platform(mut self, value: impl Into<String>) -> Self {
+        self.host.platform = value.into();
+        self
+    }
+
+    pub fn read_line(mut self, value: impl Into<String>) -> Self {
+        self.host.read_line = value.into();
+        self
+    }
+
+    pub fn shell_status(mut self, value: i64) -> Self {
+        self.host.shell_status = value;
+        self
+    }
+
+    pub fn shell_out(mut self, value: impl Into<String>) -> Self {
+        self.host.shell_out = value.into();
+        self
+    }
+
+    pub fn file(mut self, path: impl Into<String>, contents: impl Into<String>) -> Self {
+        let path = path.into();
+        self.host.files.insert(path.clone(), contents.into());
+        self.host.existing_paths.insert(path, true);
+        self
+    }
+
+    pub fn existing_path(mut self, path: impl Into<String>, exists: bool) -> Self {
+        self.host.existing_paths.insert(path.into(), exists);
+        self
+    }
+
+    pub fn build(self) -> RecordingHost {
+        self.host
     }
 }
 
@@ -78,34 +164,50 @@ impl RtHost for RecordingHost {
     }
 
     fn fs_exists(&mut self, path: &str) -> RtResult<bool> {
-        Ok(path == "exists.txt")
+        Ok(self.existing_paths.get(path).copied().unwrap_or(false))
     }
 
     fn fs_read_text(&mut self, path: &str) -> RtResult<RtString> {
-        Ok(RtString::from(format!("read:{path}")))
+        Ok(RtString::from(
+            self.files
+                .get(path)
+                .cloned()
+                .unwrap_or_else(|| format!("read:{path}")),
+        ))
     }
 
     fn fs_write_text(&mut self, path: &str, text: &str) -> RtResult<()> {
+        self.files.insert(path.to_string(), text.to_string());
+        self.existing_paths.insert(path.to_string(), true);
         self.output.push_str(&format!("[write {path}={text}]"));
         Ok(())
     }
 
     fn fs_append_text(&mut self, path: &str, text: &str) -> RtResult<()> {
+        self.files
+            .entry(path.to_string())
+            .and_modify(|existing| existing.push_str(text))
+            .or_insert_with(|| text.to_string());
+        self.existing_paths.insert(path.to_string(), true);
         self.output.push_str(&format!("[append {path}+={text}]"));
         Ok(())
     }
 
     fn fs_mkdir_all(&mut self, path: &str) -> RtResult<()> {
+        self.existing_paths.insert(path.to_string(), true);
         self.output.push_str(&format!("[mkdir {path}]"));
         Ok(())
     }
 
     fn fs_remove_file(&mut self, path: &str) -> RtResult<()> {
+        self.files.remove(path);
+        self.existing_paths.insert(path.to_string(), false);
         self.output.push_str(&format!("[rmfile {path}]"));
         Ok(())
     }
 
     fn fs_remove_dir_all(&mut self, path: &str) -> RtResult<()> {
+        self.existing_paths.insert(path.to_string(), false);
         self.output.push_str(&format!("[rmdir {path}]"));
         Ok(())
     }

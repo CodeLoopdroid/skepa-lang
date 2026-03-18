@@ -3,8 +3,8 @@ use std::fs;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use skepart::{RtHost, RtResult, RtString};
-use skeplib::ir::{self, IrInterpError, IrInterpreter, IrValue};
+use skepart::{RtErrorKind, RtHost, RtResult, RtString, RtValue};
+use skeplib::ir::{self, IrInterpreter, IrValue};
 
 #[path = "common.rs"]
 mod common;
@@ -48,21 +48,8 @@ impl RtHost for DiffHost {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExpectedErrorKind {
-    DivisionByZero,
-    IndexOutOfBounds,
-    TypeMismatch,
-}
-
 fn assert_native_and_ir_accept_same_int_source(source: &str, expected: i32) {
-    let code = common::native_run_exit_code_ok(source);
-    assert_eq!(code, expected);
-    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
-    let value = IrInterpreter::new(&program)
-        .run_main()
-        .expect("IR interpreter should run source");
-    assert_eq!(value, IrValue::Int(i64::from(expected)));
+    common::assert_native_matches_ir_value(source, RtValue::Int(i64::from(expected)));
 }
 
 fn assert_native_and_ir_accept_same_source(source: &str, expected: IrValue) {
@@ -73,18 +60,8 @@ fn assert_native_and_ir_accept_same_source(source: &str, expected: IrValue) {
     assert_eq!(value, expected);
 }
 
-fn assert_ir_rejects_source(source: &str, expected: ExpectedErrorKind) {
-    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
-    let ir_err = IrInterpreter::new(&program)
-        .run_main()
-        .expect_err("IR interpreter should fail");
-    let ir_kind = match ir_err {
-        IrInterpError::DivisionByZero => ExpectedErrorKind::DivisionByZero,
-        IrInterpError::IndexOutOfBounds => ExpectedErrorKind::IndexOutOfBounds,
-        IrInterpError::TypeMismatch(_) => ExpectedErrorKind::TypeMismatch,
-        other => panic!("unexpected IR error kind in comparison test: {other:?}"),
-    };
-    assert_eq!(ir_kind, expected);
+fn assert_ir_rejects_source(source: &str, expected: RtErrorKind) {
+    common::assert_native_matches_ir_error_kind(source, expected);
 }
 
 #[test]
@@ -363,7 +340,7 @@ fn main() -> Int {
   return 8 / 0;
 }
 "#,
-        ExpectedErrorKind::DivisionByZero,
+        RtErrorKind::DivisionByZero,
     );
     assert_ir_rejects_source(
         r#"
@@ -372,7 +349,7 @@ fn main() -> Int {
   return arr[3];
 }
 "#,
-        ExpectedErrorKind::IndexOutOfBounds,
+        RtErrorKind::IndexOutOfBounds,
     );
     assert_ir_rejects_source(
         r#"
@@ -382,6 +359,6 @@ fn main() -> String {
   return str.slice("abc", 0, 99);
 }
 "#,
-        ExpectedErrorKind::IndexOutOfBounds,
+        RtErrorKind::IndexOutOfBounds,
     );
 }
