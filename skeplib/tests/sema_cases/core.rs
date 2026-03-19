@@ -78,6 +78,29 @@ fn main() -> Int {
 }
 
 #[test]
+fn sema_wrong_arity_function_call_does_not_invent_concrete_return_type() {
+    let src = r#"
+fn add(a: Int, b: Int) -> Int {
+  return a + b;
+}
+
+fn main() -> Int {
+  let x: Int = add(1);
+  return 0;
+}
+"#;
+    let (result, diags) = analyze_source(src);
+    assert!(result.has_errors);
+    assert_has_diag(&diags, "Arity mismatch for `add`: expected 2, got 1");
+    assert!(
+        !diags
+            .as_slice()
+            .iter()
+            .any(|d| d.message.contains("Type mismatch in let `x`"))
+    );
+}
+
+#[test]
 fn sema_requires_import_for_io_calls() {
     let src = r#"
 fn main() -> Int {
@@ -198,6 +221,33 @@ fn main() -> Int {
         d.message
             .contains("Arity mismatch for function value call: expected 2, got 1")
     }));
+}
+
+#[test]
+fn sema_wrong_arity_function_value_call_does_not_invent_concrete_return_type() {
+    let src = r#"
+fn add(a: Int, b: Int) -> Int {
+  return a + b;
+}
+
+fn main() -> Int {
+  let f: Fn(Int, Int) -> Int = add;
+  let x: Int = f(1);
+  return 0;
+}
+"#;
+    let (result, diags) = analyze_source(src);
+    assert!(result.has_errors);
+    assert_has_diag(
+        &diags,
+        "Arity mismatch for function value call: expected 2, got 1",
+    );
+    assert!(
+        !diags
+            .as_slice()
+            .iter()
+            .any(|d| d.message.contains("Type mismatch in let `x`"))
+    );
 }
 
 #[test]

@@ -319,6 +319,33 @@ fn main() -> Int {
 }
 
 #[test]
+fn sema_wrong_arity_method_call_does_not_invent_concrete_return_type() {
+    let src = r#"
+struct User { id: Int }
+impl User {
+  fn add(self, x: Int) -> Int { return self.id + x; }
+}
+fn main() -> Int {
+  let u = User { id: 7 };
+  let x: Int = u.add();
+  return 0;
+}
+"#;
+    let (result, diags) = analyze_source(src);
+    assert!(result.has_errors);
+    assert_has_diag(
+        &diags,
+        "Arity mismatch for method `User.add`: expected 1, got 0",
+    );
+    assert!(
+        !diags
+            .as_slice()
+            .iter()
+            .any(|d| d.message.contains("Type mismatch in let `x`"))
+    );
+}
+
+#[test]
 fn sema_rejects_struct_method_argument_type_mismatch() {
     let src = r#"
 struct User { id: Int }

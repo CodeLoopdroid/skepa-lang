@@ -132,7 +132,7 @@ impl Checker {
                     sig.params.len(),
                     args.len()
                 ));
-                return sig.ret.clone();
+                return TypeInfo::Unknown;
             }
 
             for (i, arg) in args.iter().enumerate() {
@@ -160,7 +160,7 @@ impl Checker {
                     params.len(),
                     args.len()
                 ));
-                return *ret;
+                return TypeInfo::Unknown;
             }
             for (i, arg) in args.iter().enumerate() {
                 let got = self.check_expr(arg, scopes);
@@ -242,7 +242,7 @@ impl Checker {
             for arg in args {
                 self.check_expr(arg, scopes);
             }
-            return sig.ret;
+            return TypeInfo::Unknown;
         }
 
         for (i, arg) in args.iter().enumerate() {
@@ -347,7 +347,7 @@ impl Checker {
     ) -> TypeInfo {
         if args.is_empty() {
             self.error(format!("{package}.{method} expects at least 1 argument"));
-            return sig.ret.clone();
+            return TypeInfo::Unknown;
         }
         let fmt_ty = self.check_expr(&args[0], scopes);
         if fmt_ty != TypeInfo::String && fmt_ty != TypeInfo::Unknown {

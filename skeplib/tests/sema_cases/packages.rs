@@ -385,6 +385,26 @@ fn main() -> Int {
 }
 
 #[test]
+fn sema_missing_variadic_format_args_do_not_invent_concrete_return_type() {
+    let src = r#"
+import io;
+fn main() -> Int {
+  let s: String = io.format();
+  return 0;
+}
+"#;
+    let (result, diags) = analyze_source(src);
+    assert!(result.has_errors);
+    assert_has_diag(&diags, "io.format expects at least 1 argument");
+    assert!(
+        !diags
+            .as_slice()
+            .iter()
+            .any(|d| d.message.contains("Type mismatch in let `s`"))
+    );
+}
+
+#[test]
 fn sema_rejects_typed_io_print_arity_mismatch() {
     let src = r#"
 import io;
