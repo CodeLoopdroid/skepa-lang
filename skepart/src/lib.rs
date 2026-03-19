@@ -1,8 +1,9 @@
 pub mod array;
 pub mod builtins;
 pub mod error;
-mod ffi;
+mod ffi_builtins;
 mod ffi_containers;
+mod ffi_function;
 mod ffi_support;
 mod ffi_values;
 pub mod function;
