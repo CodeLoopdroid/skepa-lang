@@ -147,7 +147,7 @@ fn ignores_comments_at_end_of_file() {
 #[test]
 fn ignores_block_comment_with_punctuation_and_keywords_inside() {
     let (tokens, diags) = lex("/* if else == [] {} // not real */ return;");
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    common::assert_no_diags(&diags);
     let got: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
     assert_eq!(
         got,
@@ -185,7 +185,7 @@ fn lexes_complete_fixture_program() {
         .join("full_program.sk");
     let src = fs::read_to_string(path).expect("fixture file should exist");
     let (tokens, diags) = lex(&src);
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    common::assert_no_diags(&diags);
     assert!(tokens.len() > 20);
     assert_eq!(tokens.last().map(|t| t.kind), Some(TokenKind::Eof));
 }
@@ -254,7 +254,7 @@ fn continues_after_error_and_lexes_rest() {
 #[test]
 fn lexes_identifiers_with_underscore_and_digits() {
     let (tokens, diags) = lex("_x foo_2 bar99");
-    assert!(diags.is_empty());
+    common::assert_no_diags(&diags);
     assert_eq!(tokens[0].kind, TokenKind::Ident);
     assert_eq!(tokens[0].lexeme, "_x");
     assert_eq!(tokens[1].kind, TokenKind::Ident);
@@ -266,7 +266,7 @@ fn lexes_identifiers_with_underscore_and_digits() {
 #[test]
 fn lower_case_type_names_are_plain_identifiers() {
     let (tokens, diags) = lex("int float bool string void");
-    assert!(diags.is_empty());
+    common::assert_no_diags(&diags);
     let got: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
     assert_eq!(
         got,
@@ -284,7 +284,7 @@ fn lower_case_type_names_are_plain_identifiers() {
 #[test]
 fn lexes_number_followed_by_identifier_as_separate_tokens() {
     let (tokens, diags) = lex("123abc");
-    assert!(diags.is_empty());
+    common::assert_no_diags(&diags);
     assert_eq!(tokens[0].kind, TokenKind::IntLit);
     assert_eq!(tokens[0].lexeme, "123");
     assert_eq!(tokens[1].kind, TokenKind::Ident);
@@ -295,7 +295,7 @@ fn lexes_number_followed_by_identifier_as_separate_tokens() {
 #[test]
 fn lexes_float_followed_by_identifier_as_separate_tokens() {
     let (tokens, diags) = lex("3.14foo");
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    common::assert_no_diags(&diags);
     assert_eq!(tokens[0].kind, TokenKind::FloatLit);
     assert_eq!(tokens[0].lexeme, "3.14");
     assert_eq!(tokens[1].kind, TokenKind::Ident);
@@ -306,7 +306,7 @@ fn lexes_float_followed_by_identifier_as_separate_tokens() {
 #[test]
 fn lexes_double_dot_as_two_dot_tokens() {
     let (tokens, diags) = lex("1..2");
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    common::assert_no_diags(&diags);
     let got: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
     assert_eq!(
         got,
@@ -323,7 +323,7 @@ fn lexes_double_dot_as_two_dot_tokens() {
 #[test]
 fn lexes_zero_dot_as_int_then_dot_tokens() {
     let (tokens, diags) = lex("0.");
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    common::assert_no_diags(&diags);
     let got: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
     assert_eq!(got, vec![TokenKind::IntLit, TokenKind::Dot, TokenKind::Eof]);
 }
@@ -331,7 +331,7 @@ fn lexes_zero_dot_as_int_then_dot_tokens() {
 #[test]
 fn lexes_leading_dot_number_as_dot_then_int_tokens() {
     let (tokens, diags) = lex(".5");
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    common::assert_no_diags(&diags);
     let got: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
     assert_eq!(got, vec![TokenKind::Dot, TokenKind::IntLit, TokenKind::Eof]);
 }
@@ -339,7 +339,7 @@ fn lexes_leading_dot_number_as_dot_then_int_tokens() {
 #[test]
 fn lexes_int_then_dot_then_int_when_not_float_form() {
     let (tokens, diags) = lex("12. x");
-    assert!(diags.is_empty());
+    common::assert_no_diags(&diags);
     assert_eq!(tokens[0].kind, TokenKind::IntLit);
     assert_eq!(tokens[0].lexeme, "12");
     assert_eq!(tokens[1].kind, TokenKind::Dot);
@@ -349,7 +349,7 @@ fn lexes_int_then_dot_then_int_when_not_float_form() {
 #[test]
 fn tracks_token_spans_line_and_column() {
     let (tokens, diags) = lex("let x = 1;\nreturn x;");
-    assert!(diags.is_empty());
+    common::assert_no_diags(&diags);
 
     assert_eq!(tokens[0].kind, TokenKind::KwLet);
     assert_eq!(tokens[0].span.line, 1);
@@ -366,7 +366,7 @@ fn tracks_token_spans_line_and_column() {
 #[test]
 fn tracks_string_span_start_position() {
     let (tokens, diags) = lex("  \"abc\"");
-    assert!(diags.is_empty());
+    common::assert_no_diags(&diags);
     assert_eq!(tokens[0].kind, TokenKind::StringLit);
     assert_eq!(tokens[0].span.line, 1);
     assert_eq!(tokens[0].span.col, 3);
@@ -375,7 +375,7 @@ fn tracks_string_span_start_position() {
 #[test]
 fn tracks_position_after_multiline_block_comment() {
     let (tokens, diags) = lex("/* line1\nline2 */\nfn main");
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    common::assert_no_diags(&diags);
     assert_eq!(tokens[0].kind, TokenKind::KwFn);
     assert_eq!(tokens[0].span.line, 3);
     assert_eq!(tokens[0].span.col, 1);
@@ -386,14 +386,14 @@ fn tracks_position_after_multiline_block_comment() {
 #[test]
 fn lexes_string_with_escape_sequences() {
     let (tokens, diags) = lex("\"a\\n\\t\\\"b\\\\c\"");
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    common::assert_no_diags(&diags);
     assert_eq!(tokens[0].kind, TokenKind::StringLit);
 }
 
 #[test]
 fn string_literal_keeps_raw_escape_lexeme() {
     let (tokens, diags) = lex("\"a\\n\\\"b\\\\c\"");
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    common::assert_no_diags(&diags);
     assert_eq!(tokens[0].kind, TokenKind::StringLit);
     assert_eq!(tokens[0].lexeme, "\"a\\n\\\"b\\\\c\"");
 }
@@ -402,7 +402,7 @@ fn string_literal_keeps_raw_escape_lexeme() {
 fn lexes_long_escaped_string_with_unicode_contents() {
     let src = "\"alpha\\n\\tbeta\\\"quote\\\"\\\\नमस्ते終\"";
     let (tokens, diags) = lex(src);
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    common::assert_no_diags(&diags);
     assert_eq!(tokens[0].kind, TokenKind::StringLit);
     assert_eq!(tokens[0].lexeme, src);
     assert_eq!(tokens[1].kind, TokenKind::Eof);
@@ -411,7 +411,7 @@ fn lexes_long_escaped_string_with_unicode_contents() {
 #[test]
 fn lexes_empty_input_to_only_eof() {
     let (tokens, diags) = lex("");
-    assert!(diags.is_empty());
+    common::assert_no_diags(&diags);
     assert_eq!(tokens.len(), 1);
     assert_eq!(tokens[0].kind, TokenKind::Eof);
 }
@@ -419,7 +419,7 @@ fn lexes_empty_input_to_only_eof() {
 #[test]
 fn lexes_float_then_dot_chain() {
     let (tokens, diags) = lex("1.2.3");
-    assert!(diags.is_empty());
+    common::assert_no_diags(&diags);
     let got: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
     assert_eq!(
         got,
@@ -480,7 +480,7 @@ fn reports_unterminated_block_comment_across_newline() {
 #[test]
 fn keywords_inside_identifiers_are_not_keywords() {
     let (tokens, diags) = lex("imported fnx returnValue trueish false0");
-    assert!(diags.is_empty());
+    common::assert_no_diags(&diags);
     assert_eq!(tokens[0].kind, TokenKind::Ident);
     assert_eq!(tokens[1].kind, TokenKind::Ident);
     assert_eq!(tokens[2].kind, TokenKind::Ident);
@@ -491,7 +491,7 @@ fn keywords_inside_identifiers_are_not_keywords() {
 #[test]
 fn comments_split_tokens_cleanly_at_boundaries_and_eof() {
     let (tokens, diags) = lex("foo/* gap */bar// trailing");
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    common::assert_no_diags(&diags);
     assert_eq!(tokens[0].kind, TokenKind::Ident);
     assert_eq!(tokens[0].lexeme, "foo");
     assert_eq!(tokens[1].kind, TokenKind::Ident);
