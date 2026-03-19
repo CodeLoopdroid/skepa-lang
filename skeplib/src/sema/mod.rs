@@ -23,6 +23,9 @@ pub struct SemaResult {
 
 pub fn analyze_source(source: &str) -> (SemaResult, DiagnosticBag) {
     let (program, mut diags) = Parser::parse_source(source);
+    if !diags.is_empty() {
+        return (SemaResult { has_errors: true }, diags);
+    }
     let mut checker = Checker::new(&program);
     checker.check_program(&program);
     for d in checker.diagnostics.into_vec() {
@@ -97,6 +100,9 @@ impl Checker {
             self.globals.entry(name).or_insert(ty);
         }
         for (local, target) in ctx.direct_import_targets {
+            if let Some(sig) = self.functions.get(&local).cloned() {
+                self.functions.entry(target.clone()).or_insert(sig);
+            }
             self.direct_imports.insert(local, target);
         }
     }

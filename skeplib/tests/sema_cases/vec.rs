@@ -145,6 +145,26 @@ fn main() -> Int {
 }
 
 #[test]
+fn sema_wrong_arity_vec_builtin_does_not_invent_concrete_return_type() {
+    let src = r#"
+import vec;
+fn main() -> Int {
+  let x: Int = vec.len();
+  return 0;
+}
+"#;
+    let (result, diags) = analyze_source(src);
+    assert!(result.has_errors);
+    assert_has_diag(&diags, "vec.len expects 1 argument(s), got 0");
+    assert!(
+        !diags
+            .as_slice()
+            .iter()
+            .any(|d| d.message.contains("Type mismatch in let `x`"))
+    );
+}
+
+#[test]
 fn sema_rejects_vec_get_set_delete_arity_and_index_type_mismatches() {
     let src = r#"
 import vec;

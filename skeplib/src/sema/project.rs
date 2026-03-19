@@ -66,21 +66,29 @@ fn analyze_project_graph_phased_impl(
     graph: &ModuleGraph,
 ) -> (SemaResult, DiagnosticBag, DiagnosticBag) {
     let mut programs = HashMap::<ModuleId, Program>::new();
+    let mut parse_failed = std::collections::HashSet::<ModuleId>::new();
     let mut parse_diags_all = DiagnosticBag::new();
     let mut sema_diags_all = DiagnosticBag::new();
     let mut module_paths = HashMap::<ModuleId, String>::new();
     for (id, unit) in &graph.modules {
         module_paths.insert(id.clone(), unit.path.display().to_string());
         let (program, parse_diags) = Parser::parse_source(&unit.source);
+        let had_parse_errors = !parse_diags.is_empty();
         for mut d in parse_diags.into_vec() {
             d.message = format!("{}: {}", unit.path.display(), d.message);
             parse_diags_all.push(d);
+        }
+        if had_parse_errors {
+            parse_failed.insert(id.clone());
         }
         programs.insert(id.clone(), program);
     }
 
     let mut module_apis = HashMap::<ModuleId, ModuleApi>::new();
     for (id, program) in &programs {
+        if parse_failed.contains(id) {
+            continue;
+        }
         module_apis.insert(id.clone(), build_module_api(program));
     }
     let export_maps = match build_export_maps(graph) {
@@ -98,6 +106,9 @@ fn analyze_project_graph_phased_impl(
     };
 
     for (id, program) in &programs {
+        if parse_failed.contains(id) {
+            continue;
+        }
         let ctx = build_external_context(id, program, graph, &module_apis, &export_maps);
         let mut checker = Checker::new(program);
         checker.apply_external_context(ctx);
@@ -216,10 +227,8 @@ fn build_external_context(
                             crate::resolver::SymbolKind::Fn => {
                                 if let Some(sig) = api.functions.get(&sym.local_name).cloned() {
                                     ctx.imported_functions.insert(name.clone(), sig);
-                                    ctx.direct_import_targets.insert(
-                                        name.clone(),
-                                        format!("{}.{}", sym.module_id, name),
-                                    );
+                                    ctx.direct_import_targets
+                                        .insert(name.clone(), format!("{}.{}", target, name));
                                 }
                             }
                             crate::resolver::SymbolKind::Struct => {
@@ -255,7 +264,7 @@ fn build_external_context(
                                 if let Some(sig) = api.functions.get(&sym.local_name).cloned() {
                                     ctx.imported_functions.insert(local.clone(), sig);
                                     ctx.direct_import_targets
-                                        .insert(local, format!("{}.{}", sym.module_id, item.name));
+                                        .insert(local, format!("{}.{}", target, item.name));
                                 }
                             }
                             crate::resolver::SymbolKind::Struct => {

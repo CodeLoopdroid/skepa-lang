@@ -319,7 +319,7 @@ impl Checker {
                 sig.params.len(),
                 args.len()
             ));
-            return sig.ret.clone();
+            return TypeInfo::Unknown;
         }
 
         for (idx, arg) in args.iter().enumerate() {

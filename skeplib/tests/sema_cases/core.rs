@@ -141,6 +141,30 @@ fn main() -> Int {
 }
 
 #[test]
+fn sema_stops_after_parse_errors_without_adding_cascaded_semantic_noise() {
+    let src = r#"
+fn main() -> Int {
+  let x = ;
+  return nope;
+}
+"#;
+    let (result, diags) = analyze_source(src);
+    assert!(result.has_errors);
+    assert!(
+        diags
+            .as_slice()
+            .iter()
+            .any(|d| d.message.contains("Expected expression"))
+    );
+    assert!(
+        !diags
+            .as_slice()
+            .iter()
+            .any(|d| d.message.contains("Unknown variable `nope`"))
+    );
+}
+
+#[test]
 fn sema_accepts_function_typed_local_and_indirect_call() {
     let src = r#"
 fn add(a: Int, b: Int) -> Int {

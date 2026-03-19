@@ -21,7 +21,7 @@ pub(super) fn check_vec_builtin(
         "len" => {
             if args.len() != 1 {
                 checker.error(format!("vec.len expects 1 argument(s), got {}", args.len()));
-                return TypeInfo::Int;
+                return TypeInfo::Unknown;
             }
             match checker.check_expr(&args[0], scopes) {
                 TypeInfo::Vec { .. } | TypeInfo::Unknown => {}
@@ -35,7 +35,7 @@ pub(super) fn check_vec_builtin(
                     "vec.push expects 2 argument(s), got {}",
                     args.len()
                 ));
-                return TypeInfo::Void;
+                return TypeInfo::Unknown;
             }
             let vec_ty = checker.check_expr(&args[0], scopes);
             let val_ty = checker.check_expr(&args[1], scopes);
@@ -76,7 +76,7 @@ pub(super) fn check_vec_builtin(
         "set" => {
             if args.len() != 3 {
                 checker.error(format!("vec.set expects 3 argument(s), got {}", args.len()));
-                return TypeInfo::Void;
+                return TypeInfo::Unknown;
             }
             let vec_ty = checker.check_expr(&args[0], scopes);
             let idx_ty = checker.check_expr(&args[1], scopes);

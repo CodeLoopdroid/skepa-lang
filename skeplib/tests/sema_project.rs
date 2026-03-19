@@ -1,7 +1,7 @@
 #[path = "common.rs"]
 mod common;
 
-use skeplib::sema::analyze_project_entry;
+use skeplib::sema::{analyze_project_entry, analyze_project_entry_phased};
 use std::fs;
 
 fn make_temp_dir(label: &str) -> std::path::PathBuf {
@@ -70,6 +70,37 @@ fn main() -> Int {
 
     let (res, diags) = analyze_project_entry(&root.join("main.sk")).expect("resolver/sema");
     common::assert_sema_success(&res, &diags);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn sema_project_stops_after_parse_errors_without_project_sema_cascades() {
+    let root = common::make_temp_dir("project_parse_short_circuit");
+    fs::write(
+        root.join("main.sk"),
+        r#"
+fn main() -> Int {
+  let x = ;
+  return nope;
+}
+"#,
+    )
+    .expect("write main");
+
+    let (res, parse_diags, sema_diags) =
+        analyze_project_entry_phased(&root.join("main.sk")).expect("resolver/sema");
+    assert!(res.has_errors);
+    assert!(
+        parse_diags
+            .as_slice()
+            .iter()
+            .any(|d| d.message.contains("Expected expression"))
+    );
+    assert!(
+        sema_diags.is_empty(),
+        "unexpected sema diags: {:?}",
+        sema_diags
+    );
     let _ = fs::remove_dir_all(root);
 }
 
