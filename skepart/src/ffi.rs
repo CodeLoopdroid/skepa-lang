@@ -742,9 +742,14 @@ pub extern "C" fn skp_rt_call_function(
     _argv: *const *mut RtValue,
 ) -> *mut RtValue {
     let _ = argc;
+    // Native indirect calls are lowered through LLVM-emitted internal dispatch wrappers,
+    // not through this exported ABI symbol. Keep the entrypoint explicit and non-panicking
+    // so accidental external use fails as a regular runtime argument error.
     set_last_error(crate::RtError::new(
-        crate::RtErrorKind::UnsupportedBuiltin,
-        format!("native indirect-call trampoline not implemented for function id {function}"),
+        crate::RtErrorKind::InvalidArgument,
+        format!(
+            "skp_rt_call_function is not a supported external ABI entrypoint; function id {function} must be dispatched by generated wrappers"
+        ),
     ));
     boxed_value(RtValue::Unit)
 }

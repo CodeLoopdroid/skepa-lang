@@ -26,6 +26,7 @@ unsafe extern "C" {
         argc: i64,
         argv: *const *mut c_void,
     ) -> *mut c_void;
+    fn skp_rt_call_function(function: i32, argc: i64, argv: *const *mut c_void) -> *mut c_void;
     fn skp_rt_last_error_kind() -> i32;
     fn skp_rt_value_free(ptr: *mut c_void);
     fn skp_rt_string_free(ptr: *mut c_void);
@@ -138,4 +139,13 @@ fn ffi_exports_free_helpers_for_boxed_runtime_values() {
         skp_rt_struct_free(strukt);
         skp_rt_value_free(value);
     }
+}
+
+#[test]
+fn ffi_call_function_stub_fails_as_invalid_external_abi_use() {
+    let result = unsafe { skp_rt_call_function(7, 0, std::ptr::null()) };
+    let value = unsafe { (*(result as *mut RtValue)).clone() };
+    assert!(matches!(value, RtValue::Unit));
+    assert_eq!(unsafe { skp_rt_last_error_kind() }, 5);
+    unsafe { skp_rt_value_free(result) };
 }
