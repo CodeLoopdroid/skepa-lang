@@ -16,40 +16,6 @@ fn temp_file(name: &str, ext: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("skepa_codegen_{name}_{nanos}.{ext}"))
 }
 
-fn build_and_run_exit_code(source: &str) -> i32 {
-    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
-    let exe_path = temp_file("native_codegen_run", exe_ext());
-
-    codegen::compile_program_to_executable(&program, &exe_path)
-        .expect("native executable build should succeed");
-
-    let output = Command::new(&exe_path)
-        .output()
-        .expect("built executable should run");
-
-    let _ = fs::remove_file(&exe_path);
-
-    output
-        .status
-        .code()
-        .expect("native executable should produce an exit code")
-}
-
-fn build_and_run_output(source: &str) -> std::process::Output {
-    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
-    let exe_path = temp_file("native_codegen_output", exe_ext());
-
-    codegen::compile_program_to_executable(&program, &exe_path)
-        .expect("native executable build should succeed");
-
-    let output = Command::new(&exe_path)
-        .output()
-        .expect("built executable should run");
-
-    let _ = fs::remove_file(&exe_path);
-    output
-}
-
 fn assemble_llvm_ir(llvm_ir: &str, label: &str) {
     common::require_llvm_tool("llvm-as");
     let ll_path = temp_file(label, "ll");
@@ -120,25 +86,7 @@ fn main() -> Int {
     assert!(llvm_ir.contains("define i64 @\"step\"(i64 %arg0)"));
     assert!(llvm_ir.contains("call i64 @\"step\"(i64 4)"));
 
-    let ll_path = temp_file("direct_call", "ll");
-    let bc_path = temp_file("direct_call", "bc");
-    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
-
-    let output = Command::new("llvm-as")
-        .arg(&ll_path)
-        .arg("-o")
-        .arg(&bc_path)
-        .output()
-        .expect("llvm-as should be available on PATH");
-
-    let _ = fs::remove_file(&ll_path);
-    let _ = fs::remove_file(&bc_path);
-
-    assert!(
-        output.status.success(),
-        "llvm-as rejected generated IR: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assemble_llvm_ir(&llvm_ir, "direct_call");
 }
 
 #[test]
@@ -162,25 +110,7 @@ fn main() -> String {
     assert!(llvm_ir.contains("call ptr @skp_rt_string_from_utf8"));
     assert!(llvm_ir.contains("define ptr @\"main\"()"));
 
-    let ll_path = temp_file("string_call", "ll");
-    let bc_path = temp_file("string_call", "bc");
-    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
-
-    let output = Command::new("llvm-as")
-        .arg(&ll_path)
-        .arg("-o")
-        .arg(&bc_path)
-        .output()
-        .expect("llvm-as should be available on PATH");
-
-    let _ = fs::remove_file(&ll_path);
-    let _ = fs::remove_file(&bc_path);
-
-    assert!(
-        output.status.success(),
-        "llvm-as rejected generated IR: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assemble_llvm_ir(&llvm_ir, "string_call");
 }
 
 #[test]
@@ -202,25 +132,7 @@ fn main() -> Int {
     assert!(llvm_ir.contains("call i64 @skp_rt_builtin_str_len(ptr"));
     assert!(llvm_ir.contains("call i64 @skp_rt_builtin_str_index_of(ptr"));
 
-    let ll_path = temp_file("str_builtin", "ll");
-    let bc_path = temp_file("str_builtin", "bc");
-    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
-
-    let output = Command::new("llvm-as")
-        .arg(&ll_path)
-        .arg("-o")
-        .arg(&bc_path)
-        .output()
-        .expect("llvm-as should be available on PATH");
-
-    let _ = fs::remove_file(&ll_path);
-    let _ = fs::remove_file(&bc_path);
-
-    assert!(
-        output.status.success(),
-        "llvm-as rejected generated IR: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assemble_llvm_ir(&llvm_ir, "str_builtin");
 }
 
 #[test]
@@ -298,25 +210,7 @@ fn main() -> Int {
     assert!(llvm_ir.contains("@skp_rt_value_from_int"));
     assert!(llvm_ir.contains("@skp_rt_value_to_int"));
 
-    let ll_path = temp_file("array_runtime", "ll");
-    let bc_path = temp_file("array_runtime", "bc");
-    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
-
-    let output = Command::new("llvm-as")
-        .arg(&ll_path)
-        .arg("-o")
-        .arg(&bc_path)
-        .output()
-        .expect("llvm-as should be available on PATH");
-
-    let _ = fs::remove_file(&ll_path);
-    let _ = fs::remove_file(&bc_path);
-
-    assert!(
-        output.status.success(),
-        "llvm-as rejected generated IR: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assemble_llvm_ir(&llvm_ir, "array_runtime");
 }
 
 #[test]
@@ -352,25 +246,7 @@ fn main() -> Int {
     assert!(llvm_ir.contains("declare void @skp_rt_struct_set(ptr, i64, ptr)"));
     assert!(llvm_ir.contains("define i64 @\"Pair::mix\"(ptr %arg0, i64 %arg1)"));
 
-    let ll_path = temp_file("struct_runtime", "ll");
-    let bc_path = temp_file("struct_runtime", "bc");
-    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
-
-    let output = Command::new("llvm-as")
-        .arg(&ll_path)
-        .arg("-o")
-        .arg(&bc_path)
-        .output()
-        .expect("llvm-as should be available on PATH");
-
-    let _ = fs::remove_file(&ll_path);
-    let _ = fs::remove_file(&bc_path);
-
-    assert!(
-        output.status.success(),
-        "llvm-as rejected generated IR: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assemble_llvm_ir(&llvm_ir, "struct_runtime");
 }
 
 #[test]
@@ -398,25 +274,7 @@ fn main() -> Int {
     assert!(llvm_ir.contains("declare void @skp_rt_vec_set(ptr, i64, ptr)"));
     assert!(llvm_ir.contains("declare ptr @skp_rt_vec_delete(ptr, i64)"));
 
-    let ll_path = temp_file("vec_runtime", "ll");
-    let bc_path = temp_file("vec_runtime", "bc");
-    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
-
-    let output = Command::new("llvm-as")
-        .arg(&ll_path)
-        .arg("-o")
-        .arg(&bc_path)
-        .output()
-        .expect("llvm-as should be available on PATH");
-
-    let _ = fs::remove_file(&ll_path);
-    let _ = fs::remove_file(&bc_path);
-
-    assert!(
-        output.status.success(),
-        "llvm-as rejected generated IR: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assemble_llvm_ir(&llvm_ir, "vec_runtime");
 }
 
 #[test]
@@ -445,25 +303,7 @@ fn main() -> Int {
     assert!(llvm_ir.contains("call ptr @skp_rt_call_builtin("));
     assert!(llvm_ir.contains("@.str."));
 
-    let ll_path = temp_file("generic_builtin_runtime", "ll");
-    let bc_path = temp_file("generic_builtin_runtime", "bc");
-    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
-
-    let output = Command::new("llvm-as")
-        .arg(&ll_path)
-        .arg("-o")
-        .arg(&bc_path)
-        .output()
-        .expect("llvm-as should be available on PATH");
-
-    let _ = fs::remove_file(&ll_path);
-    let _ = fs::remove_file(&bc_path);
-
-    assert!(
-        output.status.success(),
-        "llvm-as rejected generated IR: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assemble_llvm_ir(&llvm_ir, "generic_builtin_runtime");
 }
 
 #[test]
@@ -488,25 +328,7 @@ fn main() -> Int {
     assert!(llvm_ir.contains("declare ptr @skp_rt_value_from_function(i32)"));
     assert!(llvm_ir.contains("declare i32 @skp_rt_value_to_function(ptr)"));
 
-    let ll_path = temp_file("indirect_call_runtime", "ll");
-    let bc_path = temp_file("indirect_call_runtime", "bc");
-    fs::write(&ll_path, llvm_ir).expect("should write temporary llvm ir file");
-
-    let output = Command::new("llvm-as")
-        .arg(&ll_path)
-        .arg("-o")
-        .arg(&bc_path)
-        .output()
-        .expect("llvm-as should be available on PATH");
-
-    let _ = fs::remove_file(&ll_path);
-    let _ = fs::remove_file(&bc_path);
-
-    assert!(
-        output.status.success(),
-        "llvm-as rejected generated IR: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assemble_llvm_ir(&llvm_ir, "indirect_call_runtime");
 }
 
 #[test]
@@ -522,7 +344,7 @@ fn main() -> Int {
 }
 "#;
 
-    assert_eq!(build_and_run_exit_code(source), 7);
+    assert_eq!(common::native_run_structured(source).exit_code(), 7);
 }
 
 #[test]
@@ -726,7 +548,7 @@ fn main() -> Int {
 }
 "#;
 
-    assert_eq!(build_and_run_exit_code(source), 16);
+    assert_eq!(common::native_run_structured(source).exit_code(), 16);
 }
 
 #[test]
@@ -743,7 +565,7 @@ fn main() -> Int {
 }
 "#;
 
-    assert_eq!(build_and_run_exit_code(source), 7);
+    assert_eq!(common::native_run_structured(source).exit_code(), 7);
 }
 
 #[test]
@@ -770,7 +592,7 @@ fn main() -> Int {
 }
 "#;
 
-    assert_eq!(build_and_run_exit_code(source), 7);
+    assert_eq!(common::native_run_structured(source).exit_code(), 7);
 }
 
 #[test]
@@ -784,7 +606,7 @@ fn main() -> Int {
 }
 "#;
 
-    assert_eq!(build_and_run_exit_code(source), 7);
+    assert_eq!(common::native_run_structured(source).exit_code(), 7);
 }
 
 #[test]
@@ -802,12 +624,12 @@ fn main() -> Int {
 }
 "#;
 
-    let output = build_and_run_output(source);
-    assert_eq!(output.status.code(), Some(7));
+    let output = common::native_run_structured(source);
+    assert_eq!(output.exit_code(), 7);
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("native-ok"),
+        output.stdout_lossy().contains("native-ok"),
         "expected io builtin output, got: {}",
-        String::from_utf8_lossy(&output.stdout)
+        output.stdout_lossy()
     );
 }
 
@@ -828,7 +650,7 @@ fn main() -> Int {
 }
 "#;
 
-    assert_eq!(build_and_run_exit_code(source), 0);
+    assert_eq!(common::native_run_structured(source).exit_code(), 0);
 }
 
 #[test]
@@ -871,20 +693,20 @@ fn main() -> Int {{
 "#
     );
 
-    let output = build_and_run_output(&source);
+    let output = common::native_run_structured(&source);
     let _ = fs::remove_file(&path);
     let _ = fs::remove_dir_all(&dir);
 
-    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.exit_code(), 0);
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("ab"),
+        output.stdout_lossy().contains("ab"),
         "expected fs output, got: {}",
-        String::from_utf8_lossy(&output.stdout)
+        output.stdout_lossy()
     );
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("hi"),
+        output.stdout_lossy().contains("hi"),
         "expected shell output, got: {}",
-        String::from_utf8_lossy(&output.stdout)
+        output.stdout_lossy()
     );
 }
 
@@ -912,20 +734,7 @@ fn main() -> Int {
 "#,
     );
 
-    let program =
-        ir::lowering::compile_project_entry(&entry).expect("project IR lowering should succeed");
-    let exe_path = temp_file("project_native_runtime", exe_ext());
-
-    codegen::compile_program_to_executable(&program, &exe_path)
-        .expect("native executable build should succeed");
-
-    let output = Command::new(&exe_path)
-        .output()
-        .expect("built executable should run");
-
-    let _ = fs::remove_file(&exe_path);
-
-    assert_eq!(output.status.code(), Some(7));
+    assert_eq!(common::native_run_project_structured(&entry).exit_code(), 7);
 }
 
 fn object_ext() -> &'static str {
