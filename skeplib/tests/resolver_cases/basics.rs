@@ -1,4 +1,5 @@
 use super::*;
+use crate::common::assert_no_diags;
 
 #[test]
 fn resolver_graph_types_construct_cleanly() {
@@ -57,7 +58,7 @@ from gamma.delta import x as y;
 fn main() -> Int { return 0; }
 "#;
     let (program, diags) = Parser::parse_source(src);
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    assert_no_diags(&diags);
     let paths = collect_import_module_paths(&program);
     assert_eq!(
         paths,
@@ -77,7 +78,7 @@ fn add(a: Int, b: Int) -> Int { return a + b; }
 fn main() -> Int { return 0; }
 "#;
     let (program, diags) = Parser::parse_source(src);
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    assert_no_diags(&diags);
     let symbols = collect_module_symbols(&program, "main");
     assert_eq!(symbols.locals.len(), 4);
     assert_eq!(symbols.locals["User"].kind, SymbolKind::Struct);
@@ -96,7 +97,7 @@ export { add as plus, User, version };
 fn main() -> Int { return 0; }
 "#;
     let (program, diags) = Parser::parse_source(src);
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    assert_no_diags(&diags);
     let symbols = collect_module_symbols(&program, "main");
     let map = validate_and_build_export_map(&program, &symbols, "main", Path::new("main.sk"))
         .expect("valid exports");
@@ -114,7 +115,7 @@ export { nope };
 fn main() -> Int { return 0; }
 "#;
     let (program, diags) = Parser::parse_source(src);
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    assert_no_diags(&diags);
     let symbols = collect_module_symbols(&program, "main");
     let errs = validate_and_build_export_map(&program, &symbols, "main", Path::new("main.sk"))
         .expect_err("unknown export should fail");
@@ -134,7 +135,7 @@ export { add as x, sub as x };
 fn main() -> Int { return 0; }
 "#;
     let (program, diags) = Parser::parse_source(src);
-    assert!(diags.is_empty(), "diagnostics: {:?}", diags.as_slice());
+    assert_no_diags(&diags);
     let symbols = collect_module_symbols(&program, "main");
     let errs = validate_and_build_export_map(&program, &symbols, "main", Path::new("main.sk"))
         .expect_err("duplicate export target should fail");

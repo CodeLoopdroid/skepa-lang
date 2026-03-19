@@ -132,7 +132,7 @@ fn main() -> Int { return 0; }
     .expect("write main");
 
     let (res, diags) = analyze_project_entry(&root.join("main.sk")).expect("resolver/sema");
-    assert!(!res.has_errors, "diagnostics: {:?}", diags.as_slice());
+    common::assert_sema_success(&res, &diags);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -206,7 +206,7 @@ fn main() -> Int {
     .expect("write main");
 
     let (res, diags) = analyze_project_entry(&root.join("main.sk")).expect("resolver/sema");
-    assert!(!res.has_errors, "diagnostics: {:?}", diags.as_slice());
+    common::assert_sema_success(&res, &diags);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -231,7 +231,7 @@ fn main() -> Int { return add(20, 22); }
     )
     .expect("write main");
     let (res, diags) = analyze_project_entry(&root.join("main.sk")).expect("resolver/sema");
-    assert!(!res.has_errors, "diagnostics: {:?}", diags.as_slice());
+    common::assert_sema_success(&res, &diags);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -256,7 +256,7 @@ fn main() -> Int { return plus(1, 2); }
     )
     .expect("write main");
     let (res, diags) = analyze_project_entry(&root.join("main.sk")).expect("resolver/sema");
-    assert!(!res.has_errors, "diagnostics: {:?}", diags.as_slice());
+    common::assert_sema_success(&res, &diags);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -421,7 +421,7 @@ fn main() -> Int {
     .expect("write main");
 
     let (res, diags) = analyze_project_entry(&root.join("main.sk")).expect("resolver/sema");
-    assert!(!res.has_errors, "diagnostics: {:?}", diags.as_slice());
+    common::assert_sema_success(&res, &diags);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -453,7 +453,7 @@ fn main() -> Int {
     .expect("write main");
 
     let (res, diags) = analyze_project_entry(&root.join("main.sk")).expect("resolver/sema");
-    assert!(!res.has_errors, "diagnostics: {:?}", diags.as_slice());
+    common::assert_sema_success(&res, &diags);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -485,7 +485,7 @@ fn main() -> Int {
     .expect("write main");
 
     let (res, diags) = analyze_project_entry(&root.join("main.sk")).expect("resolver/sema");
-    assert!(!res.has_errors, "diagnostics: {:?}", diags.as_slice());
+    common::assert_sema_success(&res, &diags);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -522,6 +522,6 @@ fn main() -> Int {
     .expect("write main");
 
     let (res, diags) = analyze_project_entry(&root.join("main.sk")).expect("resolver/sema");
-    assert!(!res.has_errors, "diagnostics: {:?}", diags.as_slice());
+    common::assert_sema_success(&res, &diags);
     let _ = fs::remove_dir_all(root);
 }
