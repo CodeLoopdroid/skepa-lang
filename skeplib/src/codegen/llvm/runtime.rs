@@ -18,6 +18,7 @@ pub fn emit_runtime_decls(program: &IrProgram, out: &mut Vec<String>) -> Result<
     out.push("declare i64 @skp_rt_builtin_str_index_of(ptr, ptr)".into());
     out.push("declare ptr @skp_rt_builtin_str_slice(ptr, i64, i64)".into());
     out.push("declare ptr @skp_rt_call_builtin(ptr, ptr, i64, ptr)".into());
+    out.push("declare ptr @skp_rt_call_function(i32, i64, ptr)".into());
     out.push("declare void @skp_rt_abort_if_error()".into());
     out.push("declare ptr @skp_rt_value_from_int(i64)".into());
     out.push("declare ptr @skp_rt_value_from_bool(i1)".into());
@@ -159,16 +160,36 @@ pub fn emit_indirect_call(
     counter: &mut usize,
     string_literals: &HashMap<String, String>,
 ) -> Result<(), CodegenError> {
+    let callee_ty = infer_operand_type(func, callee);
+    let (callee_params, callee_ret) = match &callee_ty {
+        IrType::Fn { params, ret } => (params.clone(), ret.as_ref().clone()),
+        other => {
+            return Err(CodegenError::InvalidIr(format!(
+                "indirect callee must have function type, got {:?}",
+                other
+            )));
+        }
+    };
+    if callee_ret != *ret_ty {
+        return Err(CodegenError::InvalidIr(format!(
+            "indirect call return type mismatch: callee returns {:?}, call expects {:?}",
+            callee_ret, ret_ty
+        )));
+    }
+    if callee_params.len() != args.len() {
+        return Err(CodegenError::InvalidIr(format!(
+            "indirect call arity mismatch: callee expects {}, got {}",
+            callee_params.len(),
+            args.len()
+        )));
+    }
     let callee = operand_load(
         names,
         callee,
         func,
         lines,
         counter,
-        &IrType::Fn {
-            params: Vec::new(),
-            ret: Box::new(ret_ty.clone()),
-        },
+        &callee_ty,
         string_literals,
     )?;
     let argv = emit_boxed_arg_array(func, names, args, lines, counter, string_literals)?;
@@ -178,6 +199,7 @@ pub fn emit_indirect_call(
         "  {raw} = call ptr @__skp_rt_call_function_dispatch(i32 {callee}, i64 {}, ptr {argv})",
         args.len()
     ));
+    emit_abort_if_error(lines);
     if ret_ty.is_void() {
         return Ok(());
     }
@@ -797,6 +819,21 @@ fn emit_indirect_wrapper(func: &IrFunction) -> Result<Vec<String>, CodegenError>
         func.id.0
     )];
     lines.push("entry:".into());
+    let argc_ok = format!("%argc_ok_{}", func.id.0);
+    lines.push(format!(
+        "  {argc_ok} = icmp eq i64 %argc, {}",
+        func.params.len()
+    ));
+    lines.push(format!(
+        "  br i1 {argc_ok}, label %argc_ok, label %argc_bad"
+    ));
+    lines.push("argc_bad:".into());
+    lines.push(format!(
+        "  %argc_err = call ptr @skp_rt_call_function(i32 {}, i64 %argc, ptr %argv)",
+        func.id.0
+    ));
+    lines.push("  ret ptr %argc_err".into());
+    lines.push("argc_ok:".into());
     for (index, param) in func.params.iter().enumerate() {
         lines.push(format!(
             "  %argslot{index} = getelementptr inbounds ptr, ptr %argv, i64 {index}"

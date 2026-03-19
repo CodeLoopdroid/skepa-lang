@@ -145,15 +145,13 @@ impl<'a> LlvmEmitter<'a> {
                         llvm_ty(&local.ty)?
                     ));
                 }
-                for param in &func.params {
-                    if let Some(local) = func.locals.iter().find(|local| local.name == param.name) {
-                        lines.push(format!(
-                            "  store {} %arg{}, ptr %local{}, align 8",
-                            llvm_ty(&param.ty)?,
-                            param.id.0,
-                            local.id.0
-                        ));
-                    }
+                for (param, local) in func.params.iter().zip(func.locals.iter()) {
+                    lines.push(format!(
+                        "  store {} %arg{}, ptr %local{}, align 8",
+                        llvm_ty(&param.ty)?,
+                        param.id.0,
+                        local.id.0
+                    ));
                 }
             }
             for instr in &block.instrs {

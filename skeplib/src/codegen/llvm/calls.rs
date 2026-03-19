@@ -37,6 +37,12 @@ pub fn emit_direct_call(
             callee.name
         )));
     }
+    if callee.ret_ty != *call.ret_ty {
+        return Err(CodegenError::InvalidIr(format!(
+            "call return type mismatch for {}: callee returns {:?}, call expects {:?}",
+            callee.name, callee.ret_ty, call.ret_ty
+        )));
+    }
 
     let mut lowered_args = Vec::with_capacity(call.args.len());
     for (arg, param) in call.args.iter().zip(&callee.params) {
@@ -44,9 +50,9 @@ pub fn emit_direct_call(
         lowered_args.push(format!("{} {value}", llvm_ty(&param.ty)?));
     }
     let joined_args = lowered_args.join(", ");
-    let ret_llvm_ty = llvm_ty(call.ret_ty)?;
+    let ret_llvm_ty = llvm_ty(&callee.ret_ty)?;
 
-    if call.ret_ty.is_void() {
+    if callee.ret_ty.is_void() {
         lines.push(format!(
             "  call {ret_llvm_ty} {}({joined_args})",
             llvm_symbol(&callee.name)

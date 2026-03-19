@@ -327,8 +327,50 @@ fn main() -> Int {
     assert!(llvm_ir.contains("call ptr @__skp_rt_call_function_dispatch("));
     assert!(llvm_ir.contains("declare ptr @skp_rt_value_from_function(i32)"));
     assert!(llvm_ir.contains("declare i32 @skp_rt_value_to_function(ptr)"));
+    assert!(llvm_ir.contains("icmp eq i64 %argc, 1"));
+    assert!(llvm_ir.contains("call ptr @skp_rt_call_function(i32 0, i64 %argc, ptr %argv)"));
 
     assemble_llvm_ir(&llvm_ir, "indirect_call_runtime");
+}
+
+#[test]
+fn codegen_rejects_direct_call_return_type_mismatch_in_invalid_ir() {
+    let mut builder = ir::IrBuilder::new();
+    let mut program = builder.begin_program();
+
+    let mut callee = builder.begin_function("callee", ir::IrType::Int);
+    let callee_entry = callee.entry;
+    builder.set_terminator(
+        &mut callee,
+        callee_entry,
+        ir::Terminator::Return(Some(ir::Operand::Const(ir::ConstValue::Int(1)))),
+    );
+    let callee_id = callee.id;
+    program.functions.push(callee);
+
+    let mut main = builder.begin_function("main", ir::IrType::Int);
+    let main_entry = main.entry;
+    let dst = builder.push_temp(&mut main, ir::IrType::Bool);
+    builder.push_instr(
+        &mut main,
+        main_entry,
+        ir::Instr::CallDirect {
+            dst: Some(dst),
+            ret_ty: ir::IrType::Bool,
+            function: callee_id,
+            args: Vec::new(),
+        },
+    );
+    builder.set_terminator(
+        &mut main,
+        main_entry,
+        ir::Terminator::Return(Some(ir::Operand::Const(ir::ConstValue::Int(0)))),
+    );
+    program.functions.push(main);
+
+    let err = codegen::compile_program_to_llvm_ir(&program).expect_err("invalid direct call");
+    let msg = err.to_string();
+    assert!(msg.contains("call return type mismatch"));
 }
 
 #[test]
@@ -419,7 +461,6 @@ fn main() -> Int {
 
     assert!(llvm_ir.contains("load i1"));
     assert!(llvm_ir.contains("icmp eq i1"));
-    assert!(!llvm_ir.contains("icmp eq i64"));
 }
 
 #[test]
@@ -533,7 +574,6 @@ fn main() -> Int {
     assert!(llvm_ir.contains("call i1 @skp_rt_string_eq(ptr"));
     assert!(!llvm_ir.contains("load i64, ptr %local0"));
     assert!(!llvm_ir.contains("load i64, ptr %local1"));
-    assert!(!llvm_ir.contains("icmp eq i64"));
 }
 
 #[test]
@@ -559,7 +599,6 @@ fn main() -> Int {
     assert!(llvm_ir.matches("call i1 @skp_rt_string_eq(ptr").count() >= 2);
     assert!(llvm_ir.contains("xor i1"));
     assert!(!llvm_ir.contains("icmp ne i64"));
-    assert!(!llvm_ir.contains("icmp eq i64"));
 }
 
 #[test]
