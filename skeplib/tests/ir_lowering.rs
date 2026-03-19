@@ -218,3 +218,48 @@ fn main() -> Int {
     assert!(program.functions.iter().any(|func| func.name == "main"));
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn lower_project_qualified_function_value_path_to_closure_ir() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be monotonic enough for temp name")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("skepa_ir_project_fn_value_{unique}"));
+    fs::create_dir_all(root.join("utils")).expect("temp project dir should be created");
+
+    let entry = root.join("main.sk");
+    fs::write(
+        root.join("utils").join("math.sk"),
+        r#"
+fn add(a: Int, b: Int) -> Int {
+  return a + b;
+}
+
+export { add };
+"#,
+    )
+    .expect("util module should be written");
+    fs::write(
+        &entry,
+        r#"
+import utils.math;
+
+fn main() -> Int {
+  let f: Fn(Int, Int) -> Int = utils.math.add;
+  return f(20, 22);
+}
+"#,
+    )
+    .expect("entry module should be written");
+
+    let program =
+        ir::lowering::compile_project_entry(&entry).expect("project IR lowering should succeed");
+    let printed = PrettyIr::new(&program).to_string();
+    assert!(printed.contains("MakeClosure"));
+    let value = IrInterpreter::new(&program)
+        .run_main()
+        .expect("IR interpreter should run project source");
+    assert_eq!(value, IrValue::Int(42));
+    let _ = fs::remove_dir_all(&root);
+}

@@ -100,45 +100,57 @@ impl IrVerifier {
                         Self::verify_operand(program, func, right)?;
                     }
                     crate::ir::Instr::StoreGlobal { global, value, .. } => {
-                        if !program
+                        let Some(global_ty) = program
                             .globals
                             .iter()
-                            .any(|candidate| candidate.id == *global)
-                        {
+                            .find(|candidate| candidate.id == *global)
+                            .map(|candidate| candidate.ty.clone())
+                        else {
                             return Err(IrVerifyError::UnknownGlobal);
-                        }
+                        };
                         Self::verify_operand(program, func, value)?;
+                        Self::expect_operand_type(program, func, value, &global_ty)?;
                     }
                     crate::ir::Instr::StoreLocal { local, value, .. } => {
-                        if !func.locals.iter().any(|candidate| candidate.id == *local) {
+                        let Some(local_ty) = func
+                            .locals
+                            .iter()
+                            .find(|candidate| candidate.id == *local)
+                            .map(|candidate| candidate.ty.clone())
+                        else {
                             return Err(IrVerifyError::UnknownLocal {
                                 function: func.name.clone(),
                             });
-                        }
+                        };
                         Self::verify_operand(program, func, value)?;
+                        Self::expect_operand_type(program, func, value, &local_ty)?;
                     }
                     crate::ir::Instr::VecPush { vec, value } => {
                         Self::verify_operand(program, func, vec)?;
                         Self::verify_operand(program, func, value)?;
-                    }
-                    crate::ir::Instr::MakeArray { items, .. } => {
-                        for item in items {
-                            Self::verify_operand(program, func, item)?;
+                        let expected_elem_ty = Self::container_elem_type(program, func, vec);
+                        if !matches!(expected_elem_ty, IrType::Unknown) {
+                            Self::expect_operand_type(program, func, value, &expected_elem_ty)?;
                         }
                     }
-                    crate::ir::Instr::MakeArrayRepeat { value, .. } => {
+                    crate::ir::Instr::MakeArray { elem_ty, items, .. } => {
+                        for item in items {
+                            Self::verify_operand(program, func, item)?;
+                            Self::expect_operand_type(program, func, item, elem_ty)?;
+                        }
+                    }
+                    crate::ir::Instr::MakeArrayRepeat { elem_ty, value, .. } => {
                         Self::verify_operand(program, func, value)?;
+                        Self::expect_operand_type(program, func, value, elem_ty)?;
                     }
                     crate::ir::Instr::VecLen { vec: array, .. } => {
                         Self::verify_operand(program, func, array)?;
-                        Self::expect_operand_type(
-                            program,
-                            func,
-                            array,
-                            &IrType::Vec {
-                                elem: Box::new(IrType::Unknown),
-                            },
-                        )?;
+                        if !matches!(Self::operand_type(program, func, array), Some(IrType::Vec { .. }))
+                        {
+                            return Err(IrVerifyError::OperandTypeMismatch {
+                                function: func.name.clone(),
+                            });
+                        }
                     }
                     crate::ir::Instr::ArrayGet { array, index, .. }
                     | crate::ir::Instr::VecGet {
@@ -164,6 +176,10 @@ impl IrVerifier {
                         Self::verify_operand(program, func, index)?;
                         Self::verify_operand(program, func, value)?;
                         Self::expect_index_operand_type(program, func, index)?;
+                        let expected_elem_ty = Self::container_elem_type(program, func, array);
+                        if !matches!(expected_elem_ty, IrType::Unknown) {
+                            Self::expect_operand_type(program, func, value, &expected_elem_ty)?;
+                        }
                     }
                     crate::ir::Instr::VecDelete {
                         vec: array, index, ..
@@ -175,17 +191,23 @@ impl IrVerifier {
                     crate::ir::Instr::MakeStruct {
                         struct_id, fields, ..
                     } => {
-                        if !program
+                        let Some(strukt) = program
                             .structs
                             .iter()
-                            .any(|candidate| candidate.id == *struct_id)
-                        {
+                            .find(|candidate| candidate.id == *struct_id)
+                        else {
                             return Err(IrVerifyError::UnknownStruct {
                                 function: func.name.clone(),
                             });
+                        };
+                        if strukt.fields.len() != fields.len() {
+                            return Err(IrVerifyError::BadCallSignature {
+                                function: func.name.clone(),
+                            });
                         }
-                        for field in fields {
+                        for (field, expected) in fields.iter().zip(strukt.fields.iter()) {
                             Self::verify_operand(program, func, field)?;
+                            Self::expect_operand_type(program, func, field, &expected.ty)?;
                         }
                     }
                     crate::ir::Instr::StructGet { base, field, .. } => {
@@ -198,6 +220,9 @@ impl IrVerifier {
                         Self::verify_operand(program, func, base)?;
                         Self::verify_field_ref(program, func, base, field)?;
                         Self::verify_operand(program, func, value)?;
+                        if let Some(expected_ty) = Self::field_type(program, func, base, field) {
+                            Self::expect_operand_type(program, func, value, &expected_ty)?;
+                        }
                     }
                     crate::ir::Instr::CallDirect { function, args, .. } => {
                         let Some(target) = program
@@ -318,13 +343,32 @@ impl IrVerifier {
                         }
                     }
                     crate::ir::Instr::VecNew { .. } => {}
-                    crate::ir::Instr::MakeClosure { function, .. } => {
-                        if !program
+                    crate::ir::Instr::MakeClosure { dst, function } => {
+                        let Some(target) = program
                             .functions
                             .iter()
-                            .any(|candidate| candidate.id == *function)
-                        {
+                            .find(|candidate| candidate.id == *function)
+                        else {
                             return Err(IrVerifyError::UnknownFunctionTarget {
+                                function: func.name.clone(),
+                            });
+                        };
+                        let Some(actual_dst_ty) = func
+                            .temps
+                            .iter()
+                            .find(|temp| temp.id == *dst)
+                            .map(|temp| temp.ty.clone())
+                        else {
+                            return Err(IrVerifyError::UnknownTemp {
+                                function: func.name.clone(),
+                            });
+                        };
+                        let expected_dst_ty = IrType::Fn {
+                            params: target.params.iter().map(|param| param.ty.clone()).collect(),
+                            ret: Box::new(target.ret_ty.clone()),
+                        };
+                        if !Self::types_compatible(&actual_dst_ty, &expected_dst_ty) {
+                            return Err(IrVerifyError::BadCallSignature {
                                 function: func.name.clone(),
                             });
                         }
@@ -450,7 +494,7 @@ impl IrVerifier {
         }
         matches!(
             (actual, expected),
-            (_, IrType::Unknown) | (IrType::Unknown, _) | (IrType::Vec { .. }, IrType::Vec { .. })
+            (_, IrType::Unknown) | (IrType::Unknown, _)
         )
     }
 
@@ -480,6 +524,34 @@ impl IrVerifier {
             });
         }
         Ok(())
+    }
+
+    fn field_type(
+        program: &IrProgram,
+        func: &IrFunction,
+        base: &Operand,
+        field: &crate::ir::FieldRef,
+    ) -> Option<crate::ir::IrType> {
+        let crate::ir::IrType::Named(struct_name) = Self::operand_type(program, func, base)? else {
+            return None;
+        };
+        let strukt = program
+            .structs
+            .iter()
+            .find(|candidate| candidate.name == struct_name)?;
+        strukt.fields.get(field.index).map(|entry| entry.ty.clone())
+    }
+
+    fn container_elem_type(
+        program: &IrProgram,
+        func: &IrFunction,
+        operand: &Operand,
+    ) -> crate::ir::IrType {
+        match Self::operand_type(program, func, operand) {
+            Some(crate::ir::IrType::Array { elem, .. }) => *elem,
+            Some(crate::ir::IrType::Vec { elem }) => *elem,
+            _ => crate::ir::IrType::Unknown,
+        }
     }
 
     fn operand_type(

@@ -549,3 +549,150 @@ fn verifier_rejects_non_int_indexes_for_array_and_vec_ops() {
     let err = IrVerifier::verify_program(&program).expect_err("verifier should fail");
     assert!(matches!(err, ir::IrVerifyError::OperandTypeMismatch { .. }));
 }
+
+#[test]
+fn verifier_rejects_bad_store_closure_array_struct_and_vec_element_types() {
+    let callee = IrFunction {
+        id: FunctionId(1),
+        name: "callee".into(),
+        params: vec![
+            skeplib::ir::IrParam {
+                id: skeplib::ir::ParamId(0),
+                name: "x".into(),
+                ty: IrType::Int,
+            },
+            skeplib::ir::IrParam {
+                id: skeplib::ir::ParamId(1),
+                name: "y".into(),
+                ty: IrType::Int,
+            },
+        ],
+        locals: Vec::new(),
+        temps: Vec::new(),
+        ret_ty: IrType::Int,
+        entry: BlockId(0),
+        blocks: vec![BasicBlock {
+            id: BlockId(0),
+            name: "entry".into(),
+            instrs: Vec::new(),
+            terminator: Terminator::Return(Some(ir::Operand::Const(ir::ConstValue::Int(0)))),
+        }],
+    };
+    let main = IrFunction {
+        id: FunctionId(0),
+        name: "main".into(),
+        params: Vec::new(),
+        locals: vec![
+            IrLocal {
+                id: ir::LocalId(0),
+                name: "x".into(),
+                ty: IrType::Int,
+            },
+            IrLocal {
+                id: ir::LocalId(1),
+                name: "xs".into(),
+                ty: IrType::Vec {
+                    elem: Box::new(IrType::Int),
+                },
+            },
+            IrLocal {
+                id: ir::LocalId(2),
+                name: "pair".into(),
+                ty: IrType::Named("Pair".into()),
+            },
+        ],
+        temps: vec![
+            IrTemp {
+                id: TempId(0),
+                ty: IrType::Bool,
+            },
+            IrTemp {
+                id: TempId(1),
+                ty: IrType::Fn {
+                    params: vec![IrType::Int],
+                    ret: Box::new(IrType::Int),
+                },
+            },
+            IrTemp {
+                id: TempId(2),
+                ty: IrType::Array {
+                    elem: Box::new(IrType::Int),
+                    size: 1,
+                },
+            },
+            IrTemp {
+                id: TempId(3),
+                ty: IrType::Named("Pair".into()),
+            },
+        ],
+        ret_ty: IrType::Int,
+        entry: BlockId(0),
+        blocks: vec![BasicBlock {
+            id: BlockId(0),
+            name: "entry".into(),
+            instrs: vec![
+                Instr::StoreLocal {
+                    local: ir::LocalId(0),
+                    ty: IrType::Int,
+                    value: ir::Operand::Const(ir::ConstValue::Bool(true)),
+                },
+                Instr::StoreGlobal {
+                    global: ir::GlobalId(0),
+                    ty: IrType::Int,
+                    value: ir::Operand::Const(ir::ConstValue::Bool(true)),
+                },
+                Instr::MakeClosure {
+                    dst: TempId(1),
+                    function: FunctionId(1),
+                },
+                Instr::MakeArray {
+                    dst: TempId(2),
+                    elem_ty: IrType::Int,
+                    items: vec![ir::Operand::Const(ir::ConstValue::Bool(true))],
+                },
+                Instr::VecPush {
+                    vec: ir::Operand::Local(ir::LocalId(1)),
+                    value: ir::Operand::Const(ir::ConstValue::Bool(true)),
+                },
+                Instr::MakeStruct {
+                    dst: TempId(3),
+                    struct_id: StructId(0),
+                    fields: vec![ir::Operand::Const(ir::ConstValue::Bool(true))],
+                },
+                Instr::StructSet {
+                    base: ir::Operand::Local(ir::LocalId(2)),
+                    field: FieldRef {
+                        index: 0,
+                        name: "a".into(),
+                    },
+                    value: ir::Operand::Const(ir::ConstValue::Bool(true)),
+                    ty: IrType::Int,
+                },
+            ],
+            terminator: Terminator::Return(Some(ir::Operand::Const(ir::ConstValue::Int(0)))),
+        }],
+    };
+    let program = IrProgram {
+        functions: vec![main, callee],
+        globals: vec![skeplib::ir::IrGlobal {
+            id: ir::GlobalId(0),
+            name: "g".into(),
+            ty: IrType::Int,
+            init: None,
+        }],
+        structs: vec![IrStruct {
+            id: StructId(0),
+            name: "Pair".into(),
+            fields: vec![StructField {
+                name: "a".into(),
+                ty: IrType::Int,
+            }],
+        }],
+        module_init: None,
+    };
+    let err = IrVerifier::verify_program(&program).expect_err("verifier should fail");
+    assert!(matches!(
+        err,
+        ir::IrVerifyError::OperandTypeMismatch { .. } | ir::IrVerifyError::BadCallSignature { .. }
+    ));
+}

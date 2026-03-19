@@ -6,7 +6,7 @@ use crate::ir::{BlockId, IrBuilder, IrType};
 pub(super) struct IrLowerer {
     pub(super) builder: IrBuilder,
     pub(super) diags: DiagnosticBag,
-    pub(super) functions: HashMap<String, (crate::ir::FunctionId, IrType)>,
+    pub(super) functions: HashMap<String, FunctionSig>,
     pub(super) globals: HashMap<String, (crate::ir::GlobalId, IrType)>,
     pub(super) structs: HashMap<String, (crate::ir::StructId, Vec<crate::ir::StructField>)>,
     pub(super) module_id: Option<String>,
@@ -29,6 +29,13 @@ pub(super) struct FunctionLowering {
 pub(super) struct LoopLowering {
     pub(super) continue_block: BlockId,
     pub(super) break_block: BlockId,
+}
+
+#[derive(Clone)]
+pub(super) struct FunctionSig {
+    pub(super) id: crate::ir::FunctionId,
+    pub(super) params: Vec<IrType>,
+    pub(super) ret: IrType,
 }
 
 impl IrLowerer {

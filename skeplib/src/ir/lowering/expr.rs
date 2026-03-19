@@ -10,6 +10,19 @@ use crate::types::TypeInfo;
 use super::context::{FunctionLowering, IrLowerer};
 
 impl IrLowerer {
+    fn expr_to_path_parts(expr: &Expr) -> Option<Vec<String>> {
+        match expr {
+            Expr::Ident(name) => Some(vec![name.clone()]),
+            Expr::Path(parts) => Some(parts.clone()),
+            Expr::Field { base, field } => {
+                let mut parts = Self::expr_to_path_parts(base)?;
+                parts.push(field.clone());
+                Some(parts)
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn compile_expr(
         &mut self,
         func: &mut crate::ir::IrFunction,
@@ -56,6 +69,9 @@ impl IrLowerer {
                 {
                     return Some(Operand::Global(*id));
                 }
+                if let Some(target_name) = self.namespace_call_targets.get(&name).cloned() {
+                    return self.function_value(func, lowering.current_block, &target_name);
+                }
                 self.globals
                     .get(&name)
                     .or_else(|| self.globals.get(&self.qualify_name(&name)))
@@ -68,6 +84,19 @@ impl IrLowerer {
                     })
             }
             Expr::Field { base, field } => {
+                if let Some(parts) = Self::expr_to_path_parts(expr)
+                    && parts.len() >= 2
+                {
+                    let name = parts.join(".");
+                    if let Some(qualified) = self.imported_global_names.get(&name)
+                        && let Some((id, _)) = self.globals.get(qualified)
+                    {
+                        return Some(Operand::Global(*id));
+                    }
+                    if let Some(target_name) = self.namespace_call_targets.get(&name).cloned() {
+                        return self.function_value(func, lowering.current_block, &target_name);
+                    }
+                }
                 let base = self.compile_expr(func, lowering, base)?;
                 let ty = self.field_type(func, &base, field);
                 let field_ref = self.resolve_field_ref(func, &base, field);
@@ -417,19 +446,19 @@ impl IrLowerer {
                     .get(name)
                     .cloned()
                     .unwrap_or_else(|| self.qualify_name(name));
-                if let Some((function, ret_ty)) = self.functions.get(&direct_name).cloned() {
-                    let dst = if ret_ty.is_void() {
+                if let Some(sig) = self.functions.get(&direct_name).cloned() {
+                    let dst = if sig.ret.is_void() {
                         None
                     } else {
-                        Some(self.builder.push_temp(func, ret_ty.clone()))
+                        Some(self.builder.push_temp(func, sig.ret.clone()))
                     };
                     self.builder.push_instr(
                         func,
                         lowering.current_block,
                         Instr::CallDirect {
                             dst,
-                            ret_ty: ret_ty.clone(),
-                            function,
+                            ret_ty: sig.ret.clone(),
+                            function: sig.id,
                             args: lowered_args,
                         },
                     );
@@ -473,20 +502,20 @@ impl IrLowerer {
                         && let Some(target_name) = self
                             .namespace_call_targets
                             .get(&format!("{package}.{field}"))
-                        && let Some((function, ret_ty)) = self.functions.get(target_name).cloned()
+                        && let Some(sig) = self.functions.get(target_name).cloned()
                     {
-                        let dst = if ret_ty.is_void() {
+                        let dst = if sig.ret.is_void() {
                             None
                         } else {
-                            Some(self.builder.push_temp(func, ret_ty.clone()))
+                            Some(self.builder.push_temp(func, sig.ret.clone()))
                         };
                         self.builder.push_instr(
                             func,
                             lowering.current_block,
                             Instr::CallDirect {
                                 dst,
-                                ret_ty: ret_ty.clone(),
-                                function,
+                                ret_ty: sig.ret.clone(),
+                                function: sig.id,
                                 args: lowered_args,
                             },
                         );
@@ -558,7 +587,7 @@ impl IrLowerer {
             return None;
         };
         let method_name = Self::mangle_method_name(&struct_name, field);
-        let Some((function, ret_ty)) = self.functions.get(&method_name).cloned() else {
+        let Some(sig) = self.functions.get(&method_name).cloned() else {
             self.unsupported(format!(
                 "unknown method `{field}` for struct `{struct_name}` in IR lowering"
             ));
@@ -567,18 +596,18 @@ impl IrLowerer {
         let mut call_args = Vec::with_capacity(args.len() + 1);
         call_args.push(receiver);
         call_args.append(&mut args);
-        let dst = if ret_ty.is_void() {
+        let dst = if sig.ret.is_void() {
             None
         } else {
-            Some(self.builder.push_temp(func, ret_ty.clone()))
+            Some(self.builder.push_temp(func, sig.ret.clone()))
         };
         self.builder.push_instr(
             func,
             lowering.current_block,
             Instr::CallDirect {
                 dst,
-                ret_ty: ret_ty.clone(),
-                function,
+                ret_ty: sig.ret.clone(),
+                function: sig.id,
                 args: call_args,
             },
         );
@@ -818,16 +847,22 @@ impl IrLowerer {
         block: BlockId,
         name: &str,
     ) -> Option<Operand> {
-        let (function, ret_ty) = self.functions.get(name).cloned()?;
+        let sig = self.functions.get(name).cloned()?;
         let dst = self.builder.push_temp(
             func,
             IrType::Fn {
-                params: Vec::new(),
-                ret: Box::new(ret_ty),
+                params: sig.params.clone(),
+                ret: Box::new(sig.ret.clone()),
             },
         );
-        self.builder
-            .push_instr(func, block, Instr::MakeClosure { dst, function });
+        self.builder.push_instr(
+            func,
+            block,
+            Instr::MakeClosure {
+                dst,
+                function: sig.id,
+            },
+        );
         Some(Operand::Temp(dst))
     }
 
@@ -850,8 +885,17 @@ impl IrLowerer {
         let name = format!("__fn_lit_{}", self.fn_lit_counter);
         let ret_ty = IrType::from(&TypeInfo::from_ast(return_type));
         let function_id = crate::ir::FunctionId(self.functions.len() + self.lifted_functions.len());
-        self.functions
-            .insert(name.clone(), (function_id, ret_ty.clone()));
+        self.functions.insert(
+            name.clone(),
+            super::context::FunctionSig {
+                id: function_id,
+                params: params
+                    .iter()
+                    .map(|param| IrType::from(&TypeInfo::from_ast(&param.ty)))
+                    .collect(),
+                ret: ret_ty.clone(),
+            },
+        );
 
         let mut lifted = self.builder.begin_function(name, ret_ty.clone());
         lifted.id = function_id;

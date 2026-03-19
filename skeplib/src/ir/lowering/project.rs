@@ -1,12 +1,11 @@
 use std::path::Path;
 
 use crate::ir::{Instr, IrProgram, IrType, IrVerifier, Operand, Terminator, opt};
-use crate::parser::Parser;
 use crate::resolver::{
     ModuleGraph, ResolveError, ResolveErrorKind, build_export_maps, resolve_project,
 };
 
-use super::context::IrLowerer;
+use super::context::{FunctionSig, IrLowerer};
 
 pub fn compile_project_entry(entry: &Path) -> Result<IrProgram, Vec<ResolveError>> {
     let mut ir = compile_project_entry_unoptimized(entry)?;
@@ -56,15 +55,7 @@ pub fn compile_project_graph_unoptimized(
     ids.sort();
     for id in ids {
         let module = &graph.modules[&id];
-        let (program, diags) = Parser::parse_source(&module.source);
-        if !diags.is_empty() {
-            return Err(format!(
-                "Parse failed for {}: {:?}",
-                module.path.display(),
-                diags
-            ));
-        }
-        modules.push((id, program));
+        modules.push((id, module.program.clone()));
     }
 
     for (id, program) in &modules {
@@ -76,19 +67,24 @@ pub fn compile_project_graph_unoptimized(
         lowerer.configure_project_module(id, program, graph, &export_maps);
         let init_name = lowerer.qualify_name("__globals_init");
         lowerer.lower_program_bodies(program, &mut out);
-        if let Some((function_id, _)) = lowerer.functions.get(&init_name).cloned()
-            && out.functions.iter().any(|func| func.id == function_id)
-            && !init_function_ids.contains(&function_id)
+        if let Some(sig) = lowerer.functions.get(&init_name).cloned()
+            && out.functions.iter().any(|func| func.id == sig.id)
+            && !init_function_ids.contains(&sig.id)
         {
-            init_function_ids.push(function_id);
+            init_function_ids.push(sig.id);
         }
     }
 
     if !init_function_ids.is_empty() {
         let wrapper_id = crate::ir::FunctionId(lowerer.functions.len());
-        lowerer
-            .functions
-            .insert("__globals_init".to_string(), (wrapper_id, IrType::Void));
+        lowerer.functions.insert(
+            "__globals_init".to_string(),
+            FunctionSig {
+                id: wrapper_id,
+                params: Vec::new(),
+                ret: IrType::Void,
+            },
+        );
         let mut init = lowerer
             .builder
             .begin_function("__globals_init", IrType::Void);
@@ -123,9 +119,14 @@ pub fn compile_project_graph_unoptimized(
         return Err("Entry module does not define main".to_string());
     };
     let wrapper_main_id = crate::ir::FunctionId(lowerer.functions.len());
-    lowerer
-        .functions
-        .insert("main".to_string(), (wrapper_main_id, entry_main_ty.clone()));
+    lowerer.functions.insert(
+        "main".to_string(),
+        FunctionSig {
+            id: wrapper_main_id,
+            params: Vec::new(),
+            ret: entry_main_ty.clone(),
+        },
+    );
     let mut main = lowerer
         .builder
         .begin_function("main", entry_main_ty.clone());

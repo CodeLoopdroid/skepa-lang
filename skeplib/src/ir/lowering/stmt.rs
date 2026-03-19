@@ -1,5 +1,5 @@
 use crate::ast::{AssignTarget, Expr, Stmt};
-use crate::ir::{BlockId, BranchTerminator, Instr, IrType, Terminator};
+use crate::ir::{BlockId, BranchTerminator, Instr, IrType, Operand, Terminator};
 
 use super::context::{FunctionLowering, IrLowerer, LoopLowering};
 
@@ -13,6 +13,11 @@ impl IrLowerer {
         match stmt {
             Stmt::Let { name, ty, value } => {
                 if let Some(done) = self.try_compile_vec_new_let(func, lowering, name, ty, value) {
+                    return done;
+                }
+                if let Some(done) =
+                    self.try_compile_typed_empty_array_let(func, lowering, name, ty, value)
+                {
                     return done;
                 }
                 let rhs = match self.compile_expr(func, lowering, value) {
@@ -371,5 +376,54 @@ impl IrLowerer {
             self.builder
                 .set_terminator(func, from, Terminator::Jump(to));
         }
+    }
+
+    fn try_compile_typed_empty_array_let(
+        &mut self,
+        func: &mut crate::ir::IrFunction,
+        lowering: &mut FunctionLowering,
+        name: &str,
+        ty: &Option<crate::ast::TypeName>,
+        value: &Expr,
+    ) -> Option<bool> {
+        let Some(crate::ast::TypeName::Array { elem, size }) = ty else {
+            return None;
+        };
+        let Expr::ArrayLit(items) = value else {
+            return None;
+        };
+        if !items.is_empty() {
+            return None;
+        }
+
+        let elem_ty = self.lower_type_name(elem);
+        let array_ty = IrType::Array {
+            elem: Box::new(elem_ty.clone()),
+            size: *size,
+        };
+        let local = self
+            .builder
+            .push_local(func, name.to_string(), array_ty.clone());
+        lowering.locals.insert(name.to_string(), local);
+        let dst = self.builder.push_temp(func, array_ty.clone());
+        self.builder.push_instr(
+            func,
+            lowering.current_block,
+            Instr::MakeArray {
+                dst,
+                elem_ty,
+                items: Vec::new(),
+            },
+        );
+        self.builder.push_instr(
+            func,
+            lowering.current_block,
+            Instr::StoreLocal {
+                local,
+                ty: array_ty,
+                value: Operand::Temp(dst),
+            },
+        );
+        Some(true)
     }
 }

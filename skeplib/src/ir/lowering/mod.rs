@@ -11,7 +11,7 @@ mod expr;
 mod project;
 mod stmt;
 
-use context::{FunctionLowering, IrLowerer};
+use context::{FunctionLowering, FunctionSig, IrLowerer};
 
 pub use project::{
     compile_project_entry, compile_project_entry_unoptimized, compile_project_graph,
@@ -276,22 +276,51 @@ impl IrLowerer {
         if !program.globals.is_empty() {
             let init_name = self.qualify_name("__globals_init");
             let id = crate::ir::FunctionId(self.functions.len());
-            self.functions.insert(init_name, (id, IrType::Void));
+            self.functions.insert(
+                init_name,
+                FunctionSig {
+                    id,
+                    params: Vec::new(),
+                    ret: IrType::Void,
+                },
+            );
         }
 
         for func in &program.functions {
+            let params = func
+                .params
+                .iter()
+                .map(|param| self.lower_type_name(&param.ty))
+                .collect::<Vec<_>>();
             let ret_ty = func
                 .return_type
                 .as_ref()
                 .map(|ty| self.lower_type_name(ty))
                 .unwrap_or(IrType::Void);
             let id = crate::ir::FunctionId(self.functions.len());
-            self.functions
-                .insert(self.qualify_name(&func.name), (id, ret_ty));
+            self.functions.insert(
+                self.qualify_name(&func.name),
+                FunctionSig {
+                    id,
+                    params,
+                    ret: ret_ty,
+                },
+            );
         }
 
         for imp in &program.impls {
             for method in &imp.methods {
+                let params = method
+                    .params
+                    .iter()
+                    .map(|param| {
+                        if param.name == "self" {
+                            IrType::Named(self.resolve_struct_runtime_name(&imp.target))
+                        } else {
+                            self.lower_type_name(&param.ty)
+                        }
+                    })
+                    .collect::<Vec<_>>();
                 let ret_ty = method
                     .return_type
                     .as_ref()
@@ -302,7 +331,14 @@ impl IrLowerer {
                     &method.name,
                 );
                 let id = crate::ir::FunctionId(self.functions.len());
-                self.functions.insert(method_name, (id, ret_ty));
+                self.functions.insert(
+                    method_name,
+                    FunctionSig {
+                        id,
+                        params,
+                        ret: ret_ty,
+                    },
+                );
             }
         }
     }
@@ -312,11 +348,11 @@ impl IrLowerer {
             let mut init = self
                 .builder
                 .begin_function(self.qualify_name("__globals_init"), IrType::Void);
-            let (init_id, _) = self
+            let init_id = self
                 .functions
                 .get(&init.name)
-                .cloned()
-                .unwrap_or((crate::ir::FunctionId(usize::MAX), IrType::Void));
+                .map(|sig| sig.id)
+                .unwrap_or(crate::ir::FunctionId(usize::MAX));
             init.id = init_id;
             if self.compile_globals_init(&mut init, program).is_some() {
                 if !self.project_mode {
@@ -353,15 +389,19 @@ impl IrLowerer {
     }
 
     fn compile_function(&mut self, func: &FnDecl) -> Option<crate::ir::IrFunction> {
-        let (function_id, ret_ty) = self
+        let sig = self
             .functions
             .get(&self.qualify_name(&func.name))
             .cloned()
-            .unwrap_or((crate::ir::FunctionId(usize::MAX), IrType::Void));
+            .unwrap_or(FunctionSig {
+                id: crate::ir::FunctionId(usize::MAX),
+                params: Vec::new(),
+                ret: IrType::Void,
+            });
         let mut out = self
             .builder
-            .begin_function(self.qualify_name(&func.name), ret_ty.clone());
-        out.id = function_id;
+            .begin_function(self.qualify_name(&func.name), sig.ret.clone());
+        out.id = sig.id;
         let mut lowering = FunctionLowering {
             current_block: out.entry,
             locals: HashMap::new(),
@@ -396,7 +436,7 @@ impl IrLowerer {
                 .map(|block| &block.terminator),
             Some(Terminator::Unreachable)
         ) {
-            let terminator = if ret_ty.is_void() {
+            let terminator = if sig.ret.is_void() {
                 Terminator::Return(None)
             } else {
                 self.diags.error(
@@ -422,13 +462,17 @@ impl IrLowerer {
     ) -> Option<crate::ir::IrFunction> {
         let runtime_target = self.resolve_struct_runtime_name(target);
         let method_name = Self::mangle_method_name(&runtime_target, &method.name);
-        let (function_id, ret_ty) = self
+        let sig = self
             .functions
             .get(&method_name)
             .cloned()
-            .unwrap_or((crate::ir::FunctionId(usize::MAX), IrType::Void));
-        let mut out = self.builder.begin_function(method_name, ret_ty.clone());
-        out.id = function_id;
+            .unwrap_or(FunctionSig {
+                id: crate::ir::FunctionId(usize::MAX),
+                params: Vec::new(),
+                ret: IrType::Void,
+            });
+        let mut out = self.builder.begin_function(method_name, sig.ret.clone());
+        out.id = sig.id;
         let mut lowering = FunctionLowering {
             current_block: out.entry,
             locals: HashMap::new(),
@@ -461,7 +505,7 @@ impl IrLowerer {
                 .map(|block| &block.terminator),
             Some(Terminator::Unreachable)
         ) {
-            let terminator = if ret_ty.is_void() {
+            let terminator = if sig.ret.is_void() {
                 Terminator::Return(None)
             } else {
                 self.diags.error(
