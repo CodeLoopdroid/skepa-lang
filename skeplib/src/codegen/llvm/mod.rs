@@ -1,7 +1,9 @@
 mod block;
 mod calls;
+mod compare;
 mod context;
 mod runtime;
+mod strings;
 mod types;
 mod value;
 
