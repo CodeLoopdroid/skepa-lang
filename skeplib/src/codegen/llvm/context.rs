@@ -1,14 +1,14 @@
 use crate::codegen::CodegenError;
 use crate::codegen::llvm::calls::{self, DirectCall};
-use crate::codegen::llvm::compare::{emit_compare, infer_compare_operand_type};
 use crate::codegen::llvm::function;
+use crate::codegen::llvm::instr_scalar;
 use crate::codegen::llvm::module;
 use crate::codegen::llvm::runtime;
 use crate::codegen::llvm::strings::collect_string_literals;
 use crate::codegen::llvm::terminator;
 use crate::codegen::llvm::types::llvm_ty;
-use crate::codegen::llvm::value::{ValueNames, llvm_float_literal, llvm_symbol, operand_load};
-use crate::ir::{BinaryOp, ConstValue, Instr, IrFunction, IrProgram, Operand, UnaryOp};
+use crate::codegen::llvm::value::{ValueNames, llvm_symbol, operand_load};
+use crate::ir::{Instr, IrFunction, IrProgram};
 use std::collections::HashMap;
 
 pub struct LlvmEmitter<'a> {
@@ -96,155 +96,23 @@ impl<'a> LlvmEmitter<'a> {
         lines: &mut Vec<String>,
         counter: &mut usize,
     ) -> Result<(), CodegenError> {
+        if instr_scalar::emit_scalar_instr(
+            self.program,
+            func,
+            names,
+            instr,
+            lines,
+            counter,
+            &self.string_literals,
+        )? {
+            return Ok(());
+        }
         match instr {
-            Instr::Const { dst, ty, value } => {
-                let dest = names.temp(*dst)?;
-                match value {
-                    ConstValue::Int(v) => {
-                        lines.push(format!("  {dest} = add {} 0, {v}", llvm_ty(ty)?))
-                    }
-                    ConstValue::Float(v) => lines.push(format!(
-                        "  {dest} = fadd {} 0.0, {}",
-                        llvm_ty(ty)?,
-                        llvm_float_literal(*v)
-                    )),
-                    ConstValue::Bool(v) => {
-                        let int = if *v { 1 } else { 0 };
-                        lines.push(format!("  {dest} = add {} 0, {int}", llvm_ty(ty)?));
-                    }
-                    ConstValue::String(_) => {
-                        let value = operand_load(
-                            names,
-                            &Operand::Const(value.clone()),
-                            func,
-                            lines,
-                            counter,
-                            ty,
-                            &self.string_literals,
-                        )?;
-                        lines.push(format!("  {dest} = bitcast ptr {value} to ptr"));
-                    }
-                    _ => {
-                        return Err(CodegenError::Unsupported(
-                            "only Int/Float/Bool/String constants are supported",
-                        ));
-                    }
-                }
-            }
-            Instr::Copy { dst, ty, src } => {
-                let dest = names.temp(*dst)?;
-                let value =
-                    operand_load(names, src, func, lines, counter, ty, &self.string_literals)?;
-                if matches!(
-                    ty,
-                    crate::ir::IrType::String
-                        | crate::ir::IrType::Named(_)
-                        | crate::ir::IrType::Array { .. }
-                        | crate::ir::IrType::Vec { .. }
-                ) {
-                    lines.push(format!("  {dest} = bitcast ptr {value} to ptr"));
-                } else if matches!(ty, crate::ir::IrType::Fn { .. }) {
-                    lines.push(format!("  {dest} = add i32 0, {value}"));
-                } else if matches!(ty, crate::ir::IrType::Float) {
-                    lines.push(format!("  {dest} = fadd {} 0.0, {value}", llvm_ty(ty)?));
-                } else {
-                    lines.push(format!("  {dest} = add {} 0, {value}", llvm_ty(ty)?));
-                }
-            }
-            Instr::Unary {
-                dst,
-                ty,
-                op,
-                operand,
-            } => {
-                let dest = names.temp(*dst)?;
-                let value = operand_load(
-                    names,
-                    operand,
-                    func,
-                    lines,
-                    counter,
-                    ty,
-                    &self.string_literals,
-                )?;
-                match (op, ty) {
-                    (UnaryOp::Neg, crate::ir::IrType::Int) => {
-                        lines.push(format!("  {dest} = sub i64 0, {value}"));
-                    }
-                    (UnaryOp::Neg, crate::ir::IrType::Float) => {
-                        lines.push(format!("  {dest} = fneg double {value}"));
-                    }
-                    (UnaryOp::Not, crate::ir::IrType::Bool) => {
-                        lines.push(format!("  {dest} = xor i1 {value}, true"));
-                    }
-                    _ => {
-                        return Err(CodegenError::Unsupported(
-                            "unsupported unary op/type in LLVM lowering",
-                        ));
-                    }
-                }
-            }
-            Instr::Binary {
-                dst,
-                ty,
-                op,
-                left,
-                right,
-            } => {
-                let dest = names.temp(*dst)?;
-                let left =
-                    operand_load(names, left, func, lines, counter, ty, &self.string_literals)?;
-                let right = operand_load(
-                    names,
-                    right,
-                    func,
-                    lines,
-                    counter,
-                    ty,
-                    &self.string_literals,
-                )?;
-                let opname = match (op, ty) {
-                    (BinaryOp::Add, crate::ir::IrType::Float) => "fadd",
-                    (BinaryOp::Sub, crate::ir::IrType::Float) => "fsub",
-                    (BinaryOp::Mul, crate::ir::IrType::Float) => "fmul",
-                    (BinaryOp::Div, crate::ir::IrType::Float) => "fdiv",
-                    (BinaryOp::Mod, crate::ir::IrType::Float) => {
-                        return Err(CodegenError::Unsupported(
-                            "float modulo is not implemented in LLVM lowering",
-                        ));
-                    }
-                    (BinaryOp::Add, _) => "add",
-                    (BinaryOp::Sub, _) => "sub",
-                    (BinaryOp::Mul, _) => "mul",
-                    (BinaryOp::Div, _) => "sdiv",
-                    (BinaryOp::Mod, _) => "srem",
-                };
-                lines.push(format!(
-                    "  {dest} = {opname} {} {left}, {right}",
-                    llvm_ty(ty)?
-                ));
-            }
-            Instr::Compare {
-                dst,
-                op,
-                left,
-                right,
-            } => {
-                let dest = names.temp(*dst)?;
-                let compare_ty = infer_compare_operand_type(self.program, func, left, right);
-                emit_compare(
-                    names,
-                    func,
-                    &self.string_literals,
-                    dest,
-                    *op,
-                    left,
-                    right,
-                    &compare_ty,
-                    lines,
-                    counter,
-                )?;
-            }
+            Instr::Const { .. }
+            | Instr::Copy { .. }
+            | Instr::Unary { .. }
+            | Instr::Binary { .. }
+            | Instr::Compare { .. } => unreachable!("scalar instructions handled earlier"),
             Instr::LoadGlobal { dst, ty, global } => {
                 let dest = names.temp(*dst)?;
                 lines.push(format!(

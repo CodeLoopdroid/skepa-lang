@@ -3,6 +3,7 @@ mod calls;
 mod compare;
 mod context;
 mod function;
+mod instr_scalar;
 mod module;
 mod runtime;
 mod runtime_boxing;
