@@ -352,6 +352,66 @@ fn interpreter_rejects_store_value_type_mismatch() {
 }
 
 #[test]
+fn interpreter_initializes_parameter_backed_locals_without_name_matching() {
+    let callee = IrFunction {
+        id: FunctionId(1),
+        name: "id".into(),
+        params: vec![skeplib::ir::IrParam {
+            id: skeplib::ir::ParamId(0),
+            name: "x".into(),
+            ty: IrType::Int,
+        }],
+        locals: vec![skeplib::ir::IrLocal {
+            id: skeplib::ir::LocalId(0),
+            name: "__arg0".into(),
+            ty: IrType::Int,
+        }],
+        temps: Vec::new(),
+        ret_ty: IrType::Int,
+        entry: BlockId(0),
+        blocks: vec![BasicBlock {
+            id: BlockId(0),
+            name: "entry".into(),
+            instrs: Vec::new(),
+            terminator: Terminator::Return(Some(ir::Operand::Local(ir::LocalId(0)))),
+        }],
+    };
+    let main = IrFunction {
+        id: FunctionId(0),
+        name: "main".into(),
+        params: Vec::new(),
+        locals: Vec::new(),
+        temps: vec![skeplib::ir::IrTemp {
+            id: ir::TempId(0),
+            ty: IrType::Int,
+        }],
+        ret_ty: IrType::Int,
+        entry: BlockId(0),
+        blocks: vec![BasicBlock {
+            id: BlockId(0),
+            name: "entry".into(),
+            instrs: vec![Instr::CallDirect {
+                dst: Some(ir::TempId(0)),
+                ret_ty: IrType::Int,
+                function: FunctionId(1),
+                args: vec![ir::Operand::Const(ir::ConstValue::Int(9))],
+            }],
+            terminator: Terminator::Return(Some(ir::Operand::Temp(ir::TempId(0)))),
+        }],
+    };
+    let program = IrProgram {
+        functions: vec![main, callee],
+        globals: Vec::new(),
+        structs: Vec::new(),
+        module_init: None,
+    };
+    let value = IrInterpreter::new(&program)
+        .run_main()
+        .expect("interpreter should seed parameter locals by position");
+    assert_eq!(value, IrValue::Int(9));
+}
+
+#[test]
 fn interpreter_handles_runtime_managed_values_and_function_values() {
     let source = r#"
 struct Pair {

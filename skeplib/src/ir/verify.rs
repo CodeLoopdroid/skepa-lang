@@ -89,15 +89,104 @@ impl IrVerifier {
 
             for instr in &block.instrs {
                 match instr {
-                    crate::ir::Instr::Copy { src, .. }
-                    | crate::ir::Instr::Unary { operand: src, .. } => {
+                    crate::ir::Instr::Copy { dst, src, ty } => {
                         Self::verify_operand(program, func, src)?;
+                        Self::expect_temp_type(func, *dst, ty)?;
+                        Self::expect_operand_type(program, func, src, ty)?;
                     }
-                    crate::ir::Instr::Binary { left, right, .. }
-                    | crate::ir::Instr::Compare { left, right, .. }
-                    | crate::ir::Instr::Logic { left, right, .. } => {
+                    crate::ir::Instr::Unary {
+                        dst,
+                        ty,
+                        op,
+                        operand,
+                    } => {
+                        Self::verify_operand(program, func, operand)?;
+                        Self::expect_temp_type(func, *dst, ty)?;
+                        let expected_operand_ty = match op {
+                            crate::ir::UnaryOp::Neg => ty,
+                            crate::ir::UnaryOp::Not => &IrType::Bool,
+                        };
+                        Self::expect_operand_type(program, func, operand, expected_operand_ty)?;
+                        match op {
+                            crate::ir::UnaryOp::Neg
+                                if !matches!(ty, IrType::Int | IrType::Float | IrType::Unknown) =>
+                            {
+                                return Err(IrVerifyError::OperandTypeMismatch {
+                                    function: func.name.clone(),
+                                });
+                            }
+                            crate::ir::UnaryOp::Not
+                                if !matches!(ty, IrType::Bool | IrType::Unknown) =>
+                            {
+                                return Err(IrVerifyError::OperandTypeMismatch {
+                                    function: func.name.clone(),
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                    crate::ir::Instr::Binary {
+                        dst,
+                        ty,
+                        op,
+                        left,
+                        right,
+                    } => {
                         Self::verify_operand(program, func, left)?;
                         Self::verify_operand(program, func, right)?;
+                        Self::expect_temp_type(func, *dst, ty)?;
+                        Self::expect_operand_type(program, func, left, ty)?;
+                        Self::expect_operand_type(program, func, right, ty)?;
+                        match op {
+                            crate::ir::BinaryOp::Add
+                                if !matches!(
+                                    ty,
+                                    IrType::Int | IrType::Float | IrType::String | IrType::Unknown
+                                ) =>
+                            {
+                                return Err(IrVerifyError::OperandTypeMismatch {
+                                    function: func.name.clone(),
+                                });
+                            }
+                            crate::ir::BinaryOp::Sub
+                            | crate::ir::BinaryOp::Mul
+                            | crate::ir::BinaryOp::Div
+                            | crate::ir::BinaryOp::Mod
+                                if !matches!(ty, IrType::Int | IrType::Float | IrType::Unknown) =>
+                            {
+                                return Err(IrVerifyError::OperandTypeMismatch {
+                                    function: func.name.clone(),
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                    crate::ir::Instr::Compare {
+                        dst, left, right, ..
+                    } => {
+                        Self::verify_operand(program, func, left)?;
+                        Self::verify_operand(program, func, right)?;
+                        Self::expect_temp_type(func, *dst, &IrType::Bool)?;
+                        let Some(left_ty) = Self::operand_type(program, func, left) else {
+                            continue;
+                        };
+                        let Some(right_ty) = Self::operand_type(program, func, right) else {
+                            continue;
+                        };
+                        if !Self::types_compatible(&left_ty, &right_ty) {
+                            return Err(IrVerifyError::OperandTypeMismatch {
+                                function: func.name.clone(),
+                            });
+                        }
+                    }
+                    crate::ir::Instr::Logic {
+                        dst, left, right, ..
+                    } => {
+                        Self::verify_operand(program, func, left)?;
+                        Self::verify_operand(program, func, right)?;
+                        Self::expect_temp_type(func, *dst, &IrType::Bool)?;
+                        Self::expect_operand_type(program, func, left, &IrType::Bool)?;
+                        Self::expect_operand_type(program, func, right, &IrType::Bool)?;
                     }
                     crate::ir::Instr::StoreGlobal { global, value, .. } => {
                         let Some(global_ty) = program
@@ -143,8 +232,9 @@ impl IrVerifier {
                         Self::verify_operand(program, func, value)?;
                         Self::expect_operand_type(program, func, value, elem_ty)?;
                     }
-                    crate::ir::Instr::VecLen { vec: array, .. } => {
+                    crate::ir::Instr::VecLen { dst, vec: array } => {
                         Self::verify_operand(program, func, array)?;
+                        Self::expect_temp_type(func, *dst, &IrType::Int)?;
                         if !matches!(
                             Self::operand_type(program, func, array),
                             Some(IrType::Vec { .. })
@@ -154,13 +244,30 @@ impl IrVerifier {
                             });
                         }
                     }
-                    crate::ir::Instr::ArrayGet { array, index, .. }
+                    crate::ir::Instr::ArrayGet {
+                        dst,
+                        elem_ty,
+                        array,
+                        index,
+                    }
                     | crate::ir::Instr::VecGet {
-                        vec: array, index, ..
+                        dst,
+                        elem_ty,
+                        vec: array,
+                        index,
                     } => {
                         Self::verify_operand(program, func, array)?;
                         Self::verify_operand(program, func, index)?;
                         Self::expect_index_operand_type(program, func, index)?;
+                        Self::expect_temp_type(func, *dst, elem_ty)?;
+                        let expected_elem_ty = Self::container_elem_type(program, func, array);
+                        if !matches!(expected_elem_ty, IrType::Unknown)
+                            && !Self::types_compatible(elem_ty, &expected_elem_ty)
+                        {
+                            return Err(IrVerifyError::OperandTypeMismatch {
+                                function: func.name.clone(),
+                            });
+                        }
                     }
                     crate::ir::Instr::ArraySet {
                         array,
@@ -212,9 +319,22 @@ impl IrVerifier {
                             Self::expect_operand_type(program, func, field, &expected.ty)?;
                         }
                     }
-                    crate::ir::Instr::StructGet { base, field, .. } => {
+                    crate::ir::Instr::StructGet {
+                        dst,
+                        ty,
+                        base,
+                        field,
+                    } => {
                         Self::verify_operand(program, func, base)?;
                         Self::verify_field_ref(program, func, base, field)?;
+                        Self::expect_temp_type(func, *dst, ty)?;
+                        if let Some(expected_ty) = Self::field_type(program, func, base, field)
+                            && !Self::types_compatible(ty, &expected_ty)
+                        {
+                            return Err(IrVerifyError::OperandTypeMismatch {
+                                function: func.name.clone(),
+                            });
+                        }
                     }
                     crate::ir::Instr::StructSet {
                         base, field, value, ..
@@ -226,7 +346,12 @@ impl IrVerifier {
                             Self::expect_operand_type(program, func, value, &expected_ty)?;
                         }
                     }
-                    crate::ir::Instr::CallDirect { function, args, .. } => {
+                    crate::ir::Instr::CallDirect {
+                        dst,
+                        function,
+                        args,
+                        ret_ty,
+                    } => {
                         let Some(target) = program
                             .functions
                             .iter()
@@ -245,6 +370,7 @@ impl IrVerifier {
                             Self::verify_operand(program, func, arg)?;
                             Self::expect_operand_type(program, func, arg, &param.ty)?;
                         }
+                        Self::expect_call_destination_type(func, *dst, ret_ty, &target.ret_ty)?;
                     }
                     crate::ir::Instr::CallBuiltin {
                         builtin,
@@ -328,18 +454,36 @@ impl IrVerifier {
                         }
                     }
                     crate::ir::Instr::Const { .. } => {}
-                    crate::ir::Instr::LoadGlobal { global, .. } => {
-                        if !program
+                    crate::ir::Instr::LoadGlobal { dst, ty, global } => {
+                        let Some(global_ty) = program
                             .globals
                             .iter()
-                            .any(|candidate| candidate.id == *global)
-                        {
+                            .find(|candidate| candidate.id == *global)
+                            .map(|candidate| candidate.ty.clone())
+                        else {
                             return Err(IrVerifyError::UnknownGlobal);
+                        };
+                        Self::expect_temp_type(func, *dst, ty)?;
+                        if !Self::types_compatible(ty, &global_ty) {
+                            return Err(IrVerifyError::OperandTypeMismatch {
+                                function: func.name.clone(),
+                            });
                         }
                     }
-                    crate::ir::Instr::LoadLocal { local, .. } => {
-                        if !func.locals.iter().any(|candidate| candidate.id == *local) {
+                    crate::ir::Instr::LoadLocal { dst, ty, local } => {
+                        let Some(local_ty) = func
+                            .locals
+                            .iter()
+                            .find(|candidate| candidate.id == *local)
+                            .map(|candidate| candidate.ty.clone())
+                        else {
                             return Err(IrVerifyError::UnknownLocal {
+                                function: func.name.clone(),
+                            });
+                        };
+                        Self::expect_temp_type(func, *dst, ty)?;
+                        if !Self::types_compatible(ty, &local_ty) {
+                            return Err(IrVerifyError::OperandTypeMismatch {
                                 function: func.name.clone(),
                             });
                         }
@@ -486,6 +630,59 @@ impl IrVerifier {
             return Err(IrVerifyError::OperandTypeMismatch {
                 function: func.name.clone(),
             });
+        }
+        Ok(())
+    }
+
+    fn expect_temp_type(
+        func: &IrFunction,
+        dst: crate::ir::TempId,
+        expected: &IrType,
+    ) -> Result<(), IrVerifyError> {
+        let Some(actual) = func
+            .temps
+            .iter()
+            .find(|temp| temp.id == dst)
+            .map(|temp| temp.ty.clone())
+        else {
+            return Err(IrVerifyError::UnknownTemp {
+                function: func.name.clone(),
+            });
+        };
+        if !Self::types_compatible(&actual, expected) {
+            return Err(IrVerifyError::OperandTypeMismatch {
+                function: func.name.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    fn expect_call_destination_type(
+        func: &IrFunction,
+        dst: Option<crate::ir::TempId>,
+        ret_ty: &IrType,
+        expected_ret: &IrType,
+    ) -> Result<(), IrVerifyError> {
+        match dst {
+            Some(dst) => {
+                Self::expect_temp_type(func, dst, ret_ty)?;
+                if !matches!(expected_ret, IrType::Unknown)
+                    && !Self::types_compatible(ret_ty, expected_ret)
+                {
+                    return Err(IrVerifyError::BadCallSignature {
+                        function: func.name.clone(),
+                    });
+                }
+            }
+            None => {
+                if !matches!(ret_ty, IrType::Void | IrType::Unknown)
+                    || !matches!(expected_ret, IrType::Void | IrType::Unknown)
+                {
+                    return Err(IrVerifyError::BadCallSignature {
+                        function: func.name.clone(),
+                    });
+                }
+            }
         }
         Ok(())
     }

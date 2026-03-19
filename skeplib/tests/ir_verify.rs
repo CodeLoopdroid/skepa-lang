@@ -696,3 +696,101 @@ fn verifier_rejects_bad_store_closure_array_struct_and_vec_element_types() {
         ir::IrVerifyError::OperandTypeMismatch { .. } | ir::IrVerifyError::BadCallSignature { .. }
     ));
 }
+
+#[test]
+fn verifier_rejects_bad_load_get_and_operator_result_types() {
+    let func = IrFunction {
+        id: FunctionId(0),
+        name: "main".into(),
+        params: Vec::new(),
+        locals: vec![
+            IrLocal {
+                id: ir::LocalId(0),
+                name: "flag".into(),
+                ty: IrType::Bool,
+            },
+            IrLocal {
+                id: ir::LocalId(1),
+                name: "arr".into(),
+                ty: IrType::Array {
+                    elem: Box::new(IrType::Int),
+                    size: 1,
+                },
+            },
+            IrLocal {
+                id: ir::LocalId(2),
+                name: "pair".into(),
+                ty: IrType::Named("Pair".into()),
+            },
+        ],
+        temps: vec![
+            IrTemp {
+                id: TempId(0),
+                ty: IrType::Int,
+            },
+            IrTemp {
+                id: TempId(1),
+                ty: IrType::Bool,
+            },
+            IrTemp {
+                id: TempId(2),
+                ty: IrType::Bool,
+            },
+            IrTemp {
+                id: TempId(3),
+                ty: IrType::Bool,
+            },
+        ],
+        ret_ty: IrType::Int,
+        entry: BlockId(0),
+        blocks: vec![BasicBlock {
+            id: BlockId(0),
+            name: "entry".into(),
+            instrs: vec![
+                Instr::LoadLocal {
+                    dst: TempId(0),
+                    ty: IrType::Int,
+                    local: ir::LocalId(0),
+                },
+                Instr::ArrayGet {
+                    dst: TempId(1),
+                    elem_ty: IrType::Bool,
+                    array: ir::Operand::Local(ir::LocalId(1)),
+                    index: ir::Operand::Const(ir::ConstValue::Int(0)),
+                },
+                Instr::StructGet {
+                    dst: TempId(2),
+                    ty: IrType::Bool,
+                    base: ir::Operand::Local(ir::LocalId(2)),
+                    field: FieldRef {
+                        index: 0,
+                        name: "a".into(),
+                    },
+                },
+                Instr::Binary {
+                    dst: TempId(3),
+                    ty: IrType::Bool,
+                    op: ir::BinaryOp::Add,
+                    left: ir::Operand::Const(ir::ConstValue::Bool(true)),
+                    right: ir::Operand::Const(ir::ConstValue::Bool(false)),
+                },
+            ],
+            terminator: Terminator::Return(Some(ir::Operand::Const(ir::ConstValue::Int(0)))),
+        }],
+    };
+    let program = IrProgram {
+        functions: vec![func],
+        globals: Vec::new(),
+        structs: vec![IrStruct {
+            id: StructId(0),
+            name: "Pair".into(),
+            fields: vec![StructField {
+                name: "a".into(),
+                ty: IrType::Int,
+            }],
+        }],
+        module_init: None,
+    };
+    let err = IrVerifier::verify_program(&program).expect_err("verifier should fail");
+    assert!(matches!(err, ir::IrVerifyError::OperandTypeMismatch { .. }));
+}

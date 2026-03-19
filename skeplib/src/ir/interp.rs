@@ -668,23 +668,22 @@ fn builtin_args(
 }
 
 struct Frame {
-    params: HashMap<usize, RtValue>,
     locals: HashMap<usize, RtValue>,
     temps: HashMap<crate::ir::TempId, RtValue>,
 }
 
 impl Frame {
     fn new(func: &IrFunction, args: Vec<RtValue>) -> Self {
-        let mut params = HashMap::new();
         let mut locals = HashMap::new();
-        for (param, value) in func.params.iter().zip(args) {
-            params.insert(param.id.0, value.clone());
-            if let Some(local) = func.locals.iter().find(|local| local.name == param.name) {
-                locals.insert(local.id.0, value);
-            }
+        for ((_, value), local) in func
+            .params
+            .iter()
+            .zip(args)
+            .zip(func.locals.iter().take(func.params.len()))
+        {
+            locals.insert(local.id.0, value);
         }
         Self {
-            params,
             locals,
             temps: HashMap::new(),
         }
@@ -706,7 +705,6 @@ impl Frame {
                 .locals
                 .get(&id.0)
                 .cloned()
-                .or_else(|| self.params.get(&id.0).cloned())
                 .ok_or(IrInterpError::InvalidOperand("local missing")),
             Operand::Global(id) => globals
                 .get(id.0)
