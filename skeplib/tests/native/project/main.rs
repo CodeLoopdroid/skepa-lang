@@ -1,4 +1,4 @@
-#[path = "../common.rs"]
+#[path = "../../common.rs"]
 mod common;
 
 mod fixtures;
