@@ -351,7 +351,8 @@ fn benchmark_cases(
             kind: CaseKind::Library,
             runner: Box::new(move || {
                 let (_result, parse_diags, sema_diags) =
-                    analyze_project_graph_phased(&small_graph_for_sema);
+                    analyze_project_graph_phased(&small_graph_for_sema)
+                        .map_err(format_resolve_errors)?;
                 if !parse_diags.is_empty() || !sema_diags.is_empty() {
                     return Err("unexpected diagnostics in compile_small_sema".to_string());
                 }
@@ -446,7 +447,8 @@ fn benchmark_cases(
             kind: CaseKind::Library,
             runner: Box::new(move || {
                 let (_result, parse_diags, sema_diags) =
-                    analyze_project_graph_phased(&medium_graph_for_sema);
+                    analyze_project_graph_phased(&medium_graph_for_sema)
+                        .map_err(format_resolve_errors)?;
                 if !parse_diags.is_empty() || !sema_diags.is_empty() {
                     return Err("unexpected diagnostics in compile_medium_sema".to_string());
                 }

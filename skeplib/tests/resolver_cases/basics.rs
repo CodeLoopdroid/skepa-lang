@@ -11,6 +11,14 @@ fn resolver_graph_types_construct_cleanly() {
             id: "main".to_string(),
             path: Path::new("main.sk").to_path_buf(),
             source: "fn main() -> Int { return 0; }".to_string(),
+            program: Program {
+                functions: vec![],
+                imports: vec![],
+                globals: vec![],
+                exports: vec![],
+                structs: vec![],
+                impls: vec![],
+            },
             imports: vec!["io".to_string()],
         },
     );
@@ -125,6 +133,10 @@ fn main() -> Int { return 0; }
             .any(|e| e.message.contains("Exported name `nope` does not exist"))
     );
     assert!(errs.iter().any(|e| e.code == "E-EXPORT-UNKNOWN"));
+    assert!(
+        errs.iter()
+            .any(|e| e.kind == ResolveErrorKind::ExportUnknown)
+    );
 }
 
 #[test]
@@ -189,4 +201,7 @@ fn resolve_error_codes_distinguish_duplicate_io_and_path_failures() {
 
     let not_exported_err = ResolveError::new(ResolveErrorKind::NotExported, "missing", None);
     assert_eq!(not_exported_err.code, "E-IMPORT-NOT-EXPORTED");
+
+    let export_unknown_err = ResolveError::new(ResolveErrorKind::ExportUnknown, "unknown", None);
+    assert_eq!(export_unknown_err.code, "E-EXPORT-UNKNOWN");
 }

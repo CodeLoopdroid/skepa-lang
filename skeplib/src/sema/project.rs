@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::ast::{ImportDecl, Program};
-use crate::diagnostic::{DiagnosticBag, Span};
-use crate::parser::Parser;
+use crate::diagnostic::DiagnosticBag;
 use crate::resolver::{
     ModuleGraph, ModuleId, ResolveError, build_export_maps, resolve_import_module_targets,
     resolve_project,
@@ -33,28 +32,32 @@ pub fn analyze_project_entry(
     entry: &Path,
 ) -> Result<(SemaResult, DiagnosticBag), Vec<ResolveError>> {
     let graph = resolve_project(entry)?;
-    Ok(analyze_project_graph(&graph))
+    analyze_project_graph(&graph)
 }
 
 pub fn analyze_project_entry_phased(
     entry: &Path,
 ) -> Result<(SemaResult, DiagnosticBag, DiagnosticBag), Vec<ResolveError>> {
     let graph = resolve_project(entry)?;
-    Ok(analyze_project_graph_phased(&graph))
+    analyze_project_graph_phased(&graph)
 }
 
-pub fn analyze_project_graph(graph: &ModuleGraph) -> (SemaResult, DiagnosticBag) {
+pub fn analyze_project_graph(
+    graph: &ModuleGraph,
+) -> Result<(SemaResult, DiagnosticBag), Vec<ResolveError>> {
     analyze_project_graph_impl(graph)
 }
 
 pub fn analyze_project_graph_phased(
     graph: &ModuleGraph,
-) -> (SemaResult, DiagnosticBag, DiagnosticBag) {
+) -> Result<(SemaResult, DiagnosticBag, DiagnosticBag), Vec<ResolveError>> {
     analyze_project_graph_phased_impl(graph)
 }
 
-fn analyze_project_graph_impl(graph: &ModuleGraph) -> (SemaResult, DiagnosticBag) {
-    let (result, parse_diags, sema_diags) = analyze_project_graph_phased_impl(graph);
+fn analyze_project_graph_impl(
+    graph: &ModuleGraph,
+) -> Result<(SemaResult, DiagnosticBag), Vec<ResolveError>> {
+    let (result, parse_diags, sema_diags) = analyze_project_graph_phased_impl(graph)?;
     let mut all = DiagnosticBag::new();
     for d in parse_diags.into_vec() {
         all.push(d);
@@ -62,56 +65,28 @@ fn analyze_project_graph_impl(graph: &ModuleGraph) -> (SemaResult, DiagnosticBag
     for d in sema_diags.into_vec() {
         all.push(d);
     }
-    (result, all)
+    Ok((result, all))
 }
 
 fn analyze_project_graph_phased_impl(
     graph: &ModuleGraph,
-) -> (SemaResult, DiagnosticBag, DiagnosticBag) {
+) -> Result<(SemaResult, DiagnosticBag, DiagnosticBag), Vec<ResolveError>> {
     let mut programs = HashMap::<ModuleId, Program>::new();
-    let mut parse_failed = std::collections::HashSet::<ModuleId>::new();
-    let mut parse_diags_all = DiagnosticBag::new();
+    let parse_diags_all = DiagnosticBag::new();
     let mut sema_diags_all = DiagnosticBag::new();
     let mut module_paths = HashMap::<ModuleId, String>::new();
     for (id, unit) in &graph.modules {
         module_paths.insert(id.clone(), unit.path.display().to_string());
-        let (program, parse_diags) = Parser::parse_source(&unit.source);
-        let had_parse_errors = !parse_diags.is_empty();
-        for mut d in parse_diags.into_vec() {
-            d.message = format!("{}: {}", unit.path.display(), d.message);
-            parse_diags_all.push(d);
-        }
-        if had_parse_errors {
-            parse_failed.insert(id.clone());
-        }
-        programs.insert(id.clone(), program);
+        programs.insert(id.clone(), unit.program.clone());
     }
 
     let mut module_apis = HashMap::<ModuleId, ModuleApi>::new();
     for (id, program) in &programs {
-        if parse_failed.contains(id) {
-            continue;
-        }
         module_apis.insert(id.clone(), build_module_api(program));
     }
-    let export_maps = match build_export_maps(graph) {
-        Ok(maps) => maps,
-        Err(errs) => {
-            for e in errs {
-                let mut msg = format!("resolver error: {}", e.message);
-                if let Some(path) = e.path.as_ref() {
-                    msg = format!("resolver error [{}]: {}", path.display(), e.message);
-                }
-                sema_diags_all.error(msg, Span::default());
-            }
-            HashMap::new()
-        }
-    };
+    let export_maps = build_export_maps(graph)?;
 
     for (id, program) in &programs {
-        if parse_failed.contains(id) {
-            continue;
-        }
         let ctx = build_external_context(id, program, graph, &module_apis, &export_maps);
         let mut checker = Checker::new(program);
         checker.apply_external_context(ctx);
@@ -123,13 +98,13 @@ fn analyze_project_graph_phased_impl(
         }
     }
 
-    (
+    Ok((
         SemaResult {
             has_errors: !parse_diags_all.is_empty() || !sema_diags_all.is_empty(),
         },
         parse_diags_all,
         sema_diags_all,
-    )
+    ))
 }
 
 fn build_module_api(program: &Program) -> ModuleApi {

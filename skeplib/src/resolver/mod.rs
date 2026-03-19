@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::ast::Program;
 use crate::diagnostic::DiagnosticBag;
 use crate::parser::Parser;
 
@@ -27,6 +28,7 @@ pub struct ModuleUnit {
     pub id: ModuleId,
     pub path: PathBuf,
     pub source: String,
+    pub program: Program,
     pub imports: Vec<ModuleId>,
 }
 
@@ -68,6 +70,7 @@ pub enum ResolveErrorKind {
     Parse,
     ImportConflict,
     NotExported,
+    ExportUnknown,
     Cycle,
 }
 
@@ -117,6 +120,7 @@ fn code_for_kind(kind: ResolveErrorKind) -> &'static str {
         ResolveErrorKind::Parse => "E-PARSE",
         ResolveErrorKind::ImportConflict => "E-IMPORT-CONFLICT",
         ResolveErrorKind::NotExported => "E-IMPORT-NOT-EXPORTED",
+        ResolveErrorKind::ExportUnknown => "E-EXPORT-UNKNOWN",
     }
 }
 
@@ -248,6 +252,7 @@ pub fn resolve_project(entry: &Path) -> Result<ModuleGraph, Vec<ResolveError>> {
                 id,
                 path,
                 source,
+                program,
                 imports,
             },
         );

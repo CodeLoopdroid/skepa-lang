@@ -1,6 +1,7 @@
 #[path = "common.rs"]
 mod common;
 
+use skeplib::ast::Program;
 use skeplib::parser::Parser;
 use skeplib::resolver::{
     ImportTarget, ModuleGraph, ModuleUnit, ResolveErrorKind, SymbolKind,
