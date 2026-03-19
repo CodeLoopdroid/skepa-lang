@@ -300,7 +300,9 @@ fn main() -> Int {
         codegen::compile_program_to_llvm_ir(&program).expect("LLVM lowering should succeed");
 
     assert!(llvm_ir.contains("declare ptr @skp_rt_call_builtin(ptr, ptr, i64, ptr)"));
+    assert!(llvm_ir.contains("declare void @skp_rt_value_free(ptr)"));
     assert!(llvm_ir.contains("call ptr @skp_rt_call_builtin("));
+    assert!(llvm_ir.contains("call void @skp_rt_value_free(ptr %v"));
     assert!(llvm_ir.contains("@.str."));
 
     assemble_llvm_ir(&llvm_ir, "generic_builtin_runtime");
@@ -327,8 +329,10 @@ fn main() -> Int {
     assert!(llvm_ir.contains("call ptr @__skp_rt_call_function_dispatch("));
     assert!(llvm_ir.contains("declare ptr @skp_rt_value_from_function(i32)"));
     assert!(llvm_ir.contains("declare i32 @skp_rt_value_to_function(ptr)"));
+    assert!(llvm_ir.contains("declare void @skp_rt_value_free(ptr)"));
     assert!(llvm_ir.contains("icmp eq i64 %argc, 1"));
     assert!(llvm_ir.contains("call ptr @skp_rt_call_function(i32 0, i64 %argc, ptr %argv)"));
+    assert!(llvm_ir.contains("call void @skp_rt_value_free(ptr %v"));
 
     assemble_llvm_ir(&llvm_ir, "indirect_call_runtime");
 }
@@ -417,6 +421,39 @@ fn main() -> Int {
     assert!(llvm_ir.contains("declare i1 @skp_rt_value_to_bool(ptr)"));
     assert!(llvm_ir.contains("declare ptr @skp_rt_value_from_vec(ptr)"));
     assert!(llvm_ir.contains("declare ptr @skp_rt_value_to_vec(ptr)"));
+    assert!(llvm_ir.contains("declare void @skp_rt_value_free(ptr)"));
+    assert!(llvm_ir.contains("call void @skp_rt_value_free(ptr %v"));
+}
+
+#[test]
+fn llvm_codegen_frees_boxed_values_after_runtime_container_ops() {
+    let source = r#"
+struct Pair {
+  a: Int,
+  b: Int
+}
+
+fn main() -> Int {
+  let arr: [Int; 2] = [1, 2];
+  let xs: Vec[Int] = vec.new();
+  let p = Pair { a: 3, b: 4 };
+  vec.push(xs, arr[0]);
+  vec.set(xs, 0, p.a);
+  return vec.get(xs, 0);
+}
+"#;
+
+    let program = ir::lowering::compile_source(source).expect("IR lowering should succeed");
+    let llvm_ir =
+        codegen::compile_program_to_llvm_ir(&program).expect("LLVM lowering should succeed");
+
+    assert!(llvm_ir.contains("call void @skp_rt_array_set("));
+    assert!(llvm_ir.contains("call void @skp_rt_vec_push("));
+    assert!(llvm_ir.contains("call void @skp_rt_vec_set("));
+    assert!(llvm_ir.contains("call void @skp_rt_struct_set("));
+    assert!(llvm_ir.contains("call void @skp_rt_value_free(ptr %v"));
+
+    assemble_llvm_ir(&llvm_ir, "boxed_value_frees");
 }
 
 #[test]

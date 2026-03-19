@@ -29,6 +29,7 @@ pub fn emit_runtime_decls(program: &IrProgram, out: &mut Vec<String>) -> Result<
     out.push("declare ptr @skp_rt_value_from_vec(ptr)".into());
     out.push("declare ptr @skp_rt_value_from_struct(ptr)".into());
     out.push("declare ptr @skp_rt_value_from_function(i32)".into());
+    out.push("declare void @skp_rt_value_free(ptr)".into());
     out.push("declare i64 @skp_rt_value_to_int(ptr)".into());
     out.push("declare i1 @skp_rt_value_to_bool(ptr)".into());
     out.push("declare double @skp_rt_value_to_float(ptr)".into());
@@ -129,15 +130,18 @@ fn emit_builtin_call_generic(
 ) -> Result<(), CodegenError> {
     let package_ptr = raw_string_ptr(&call.builtin.package, lines, counter, string_literals)?;
     let name_ptr = raw_string_ptr(&call.builtin.name, lines, counter, string_literals)?;
-    let argv = emit_boxed_arg_array(func, names, call.args, lines, counter, string_literals)?;
+    let boxed_args = emit_boxed_arg_array(func, names, call.args, lines, counter, string_literals)?;
     let raw = format!("%v{counter}");
     *counter += 1;
     lines.push(format!(
-        "  {raw} = call ptr @skp_rt_call_builtin(ptr {package_ptr}, ptr {name_ptr}, i64 {}, ptr {argv})",
-        call.args.len()
+        "  {raw} = call ptr @skp_rt_call_builtin(ptr {package_ptr}, ptr {name_ptr}, i64 {}, ptr {})",
+        call.args.len(),
+        boxed_args.array
     ));
     emit_abort_if_error(lines);
+    emit_free_boxed_values(&boxed_args.values, lines);
     if call.ret_ty.is_void() {
+        emit_free_boxed_value(&raw, lines);
         return Ok(());
     }
     let Some(dst) = call.dst else {
@@ -145,7 +149,9 @@ fn emit_builtin_call_generic(
             "non-void builtin call must write to a destination temp".into(),
         ));
     };
-    emit_unbox_value(names, dst, call.ret_ty, &raw, lines)
+    emit_unbox_value(names, dst, call.ret_ty, &raw, lines)?;
+    emit_free_boxed_value(&raw, lines);
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -192,15 +198,18 @@ pub fn emit_indirect_call(
         &callee_ty,
         string_literals,
     )?;
-    let argv = emit_boxed_arg_array(func, names, args, lines, counter, string_literals)?;
+    let boxed_args = emit_boxed_arg_array(func, names, args, lines, counter, string_literals)?;
     let raw = format!("%v{counter}");
     *counter += 1;
     lines.push(format!(
-        "  {raw} = call ptr @__skp_rt_call_function_dispatch(i32 {callee}, i64 {}, ptr {argv})",
-        args.len()
+        "  {raw} = call ptr @__skp_rt_call_function_dispatch(i32 {callee}, i64 {}, ptr {})",
+        args.len(),
+        boxed_args.array
     ));
     emit_abort_if_error(lines);
+    emit_free_boxed_values(&boxed_args.values, lines);
     if ret_ty.is_void() {
+        emit_free_boxed_value(&raw, lines);
         return Ok(());
     }
     let Some(dst) = dst else {
@@ -208,7 +217,9 @@ pub fn emit_indirect_call(
             "non-void indirect call must write to a destination temp".into(),
         ));
     };
-    emit_unbox_value(names, dst, ret_ty, &raw, lines)
+    emit_unbox_value(names, dst, ret_ty, &raw, lines)?;
+    emit_free_boxed_value(&raw, lines);
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -234,6 +245,7 @@ pub fn emit_make_array(
             "  call void @skp_rt_array_set(ptr {dest}, i64 {index}, ptr {boxed})"
         ));
         emit_abort_if_error(lines);
+        emit_free_boxed_value(&boxed, lines);
     }
     Ok(())
 }
@@ -255,6 +267,8 @@ pub fn emit_make_array_repeat(
     lines.push(format!(
         "  {dest} = call ptr @skp_rt_array_repeat(ptr {boxed}, i64 {size})"
     ));
+    emit_abort_if_error(lines);
+    emit_free_boxed_value(&boxed, lines);
     Ok(())
 }
 
@@ -338,6 +352,7 @@ pub fn emit_array_set(
         "  call void @skp_rt_array_set(ptr {array}, i64 {index}, ptr {boxed})"
     ));
     emit_abort_if_error(lines);
+    emit_free_boxed_value(&boxed, lines);
     Ok(())
 }
 
@@ -416,6 +431,7 @@ pub fn emit_vec_push(
         "  call void @skp_rt_vec_push(ptr {vec}, ptr {boxed})"
     ));
     emit_abort_if_error(lines);
+    emit_free_boxed_value(&boxed, lines);
     Ok(())
 }
 
@@ -497,6 +513,7 @@ pub fn emit_vec_set(
         "  call void @skp_rt_vec_set(ptr {vec}, i64 {index}, ptr {boxed})"
     ));
     emit_abort_if_error(lines);
+    emit_free_boxed_value(&boxed, lines);
     Ok(())
 }
 
@@ -578,6 +595,7 @@ pub fn emit_make_struct(
             "  call void @skp_rt_struct_set(ptr {dest}, i64 {index}, ptr {boxed})"
         ));
         emit_abort_if_error(lines);
+        emit_free_boxed_value(&boxed, lines);
     }
     Ok(())
 }
@@ -640,7 +658,13 @@ pub fn emit_struct_set(
         field.index
     ));
     emit_abort_if_error(lines);
+    emit_free_boxed_value(&boxed, lines);
     Ok(())
+}
+
+struct BoxedArgArray {
+    array: String,
+    values: Vec<String>,
 }
 
 fn emit_boxed_arg_array(
@@ -650,14 +674,16 @@ fn emit_boxed_arg_array(
     lines: &mut Vec<String>,
     counter: &mut usize,
     string_literals: &HashMap<String, String>,
-) -> Result<String, CodegenError> {
+) -> Result<BoxedArgArray, CodegenError> {
     let array = format!("%v{counter}");
     *counter += 1;
     let len = args.len().max(1);
     lines.push(format!("  {array} = alloca ptr, i64 {len}, align 8"));
+    let mut values = Vec::with_capacity(args.len());
     for (index, arg) in args.iter().enumerate() {
         let arg_ty = infer_operand_type(func, arg);
         let boxed = emit_boxed_operand(func, names, arg, &arg_ty, lines, counter, string_literals)?;
+        values.push(boxed.clone());
         let slot = format!("%v{counter}");
         *counter += 1;
         lines.push(format!(
@@ -665,7 +691,7 @@ fn emit_boxed_arg_array(
         ));
         lines.push(format!("  store ptr {boxed}, ptr {slot}, align 8"));
     }
-    Ok(array)
+    Ok(BoxedArgArray { array, values })
 }
 
 fn emit_boxed_operand(
@@ -747,6 +773,16 @@ fn emit_unbox_value(
 
 fn emit_abort_if_error(lines: &mut Vec<String>) {
     lines.push("  call void @skp_rt_abort_if_error()".into());
+}
+
+fn emit_free_boxed_value(value: &str, lines: &mut Vec<String>) {
+    lines.push(format!("  call void @skp_rt_value_free(ptr {value})"));
+}
+
+fn emit_free_boxed_values(values: &[String], lines: &mut Vec<String>) {
+    for value in values {
+        emit_free_boxed_value(value, lines);
+    }
 }
 
 fn infer_operand_type(func: &IrFunction, operand: &crate::ir::Operand) -> IrType {
