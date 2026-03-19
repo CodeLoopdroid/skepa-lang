@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use skepart::{RtErrorKind, RtHost, RtResult, RtString, RtValue};
 use skeplib::ir::{self, IrInterpreter, IrValue};
 
-#[path = "common.rs"]
+#[path = "../common.rs"]
 mod common;
 
 struct DiffHost {

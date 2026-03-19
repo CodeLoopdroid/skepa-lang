@@ -1,7 +1,6 @@
 use skeplib::ir::{self, IrValue, PrettyIr};
 
-#[path = "common.rs"]
-mod common;
+use super::common;
 
 #[test]
 fn inlining_removes_trivial_direct_calls_and_methods() {

@@ -1,7 +1,6 @@
 use skeplib::ir::{self, IrValue, PrettyIr};
 
-#[path = "common.rs"]
-mod common;
+use super::common;
 
 #[test]
 fn optimizer_preserves_runtime_managed_semantics_across_arrays_vecs_structs_and_strings() {

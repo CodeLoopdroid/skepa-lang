@@ -1,4 +1,4 @@
-#[path = "common.rs"]
+#[path = "../common.rs"]
 mod common;
 
 use skeplib::ast::{Expr, FnDecl, ImportDecl, Param, Program, Stmt, TypeName};

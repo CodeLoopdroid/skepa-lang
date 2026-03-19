@@ -1,7 +1,6 @@
 use skeplib::ir::{self, IrValue, PrettyIr};
 
-#[path = "common.rs"]
-mod common;
+use super::common;
 
 #[test]
 fn strength_reduce_rewrites_arithmetic_identities() {

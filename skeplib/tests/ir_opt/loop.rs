@@ -1,7 +1,6 @@
 use skeplib::ir::{self, IrValue, PrettyIr};
 
-#[path = "common.rs"]
-mod common;
+use super::common;
 
 #[test]
 fn loop_passes_simplify_nested_loops_without_changing_result() {

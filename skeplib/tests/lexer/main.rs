@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-#[path = "common.rs"]
+#[path = "../common.rs"]
 mod common;
 
 use skeplib::lexer::lex;

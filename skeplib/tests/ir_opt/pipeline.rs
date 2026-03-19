@@ -1,7 +1,6 @@
 use skeplib::ir::{self, IrValue, PrettyIr};
 
-#[path = "common.rs"]
-mod common;
+use super::common;
 
 #[test]
 fn optimizer_pipeline_interacts_correctly_on_mixed_program() {

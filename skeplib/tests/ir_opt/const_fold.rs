@@ -1,7 +1,6 @@
 use skeplib::ir::{self, IrInterpError, IrValue, PrettyIr};
 
-#[path = "common.rs"]
-mod common;
+use super::common;
 
 #[test]
 fn const_fold_simplifies_constants_and_constant_branches() {

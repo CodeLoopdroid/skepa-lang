@@ -1,3 +1,4 @@
+#[path = "../common.rs"]
 mod common;
 
 use skeplib::ir::IrInterpError;
