@@ -80,3 +80,38 @@ fn main() -> Int {
         .expect("IR interpreter should run optimized source");
     assert_eq!(value, IrValue::Int(120));
 }
+
+#[test]
+fn licm_does_not_hoist_closure_creation_out_of_loops() {
+    let source = r#"
+fn inc(x: Int) -> Int {
+  return x + 1;
+}
+
+fn main() -> Int {
+  let i = 0;
+  let total = 0;
+  while (i < 3) {
+    let f = inc;
+    total = total + f(i);
+    i = i + 1;
+  }
+  return total;
+}
+"#;
+
+    let mut program =
+        ir::lowering::compile_source_unoptimized(source).expect("IR lowering should succeed");
+    ir::opt::optimize_program(&mut program);
+    let printed = PrettyIr::new(&program).to_string();
+    let while_body = printed
+        .split("  while_body:")
+        .nth(1)
+        .expect("while_body block should be present");
+    assert!(while_body.contains("MakeClosure"));
+
+    let value = ir::IrInterpreter::new(&program)
+        .run_main()
+        .expect("IR interpreter should run optimized source");
+    assert_eq!(value, IrValue::Int(6));
+}

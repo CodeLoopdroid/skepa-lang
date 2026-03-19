@@ -14,11 +14,54 @@ impl<'a> PrettyIr<'a> {
 
 impl Display for PrettyIr<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        fmt_structs(f, self.program)?;
+        fmt_globals(f, self.program)?;
+        fmt_module_init(f, self.program)?;
         for function in &self.program.functions {
             fmt_function(f, function)?;
         }
         Ok(())
     }
+}
+
+fn fmt_structs(f: &mut Formatter<'_>, program: &IrProgram) -> fmt::Result {
+    if program.structs.is_empty() {
+        return Ok(());
+    }
+
+    writeln!(f, "structs {{")?;
+    for strukt in &program.structs {
+        write!(f, "  {}(", strukt.name)?;
+        for (idx, field) in strukt.fields.iter().enumerate() {
+            if idx > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}: {:?}", field.name, field.ty)?;
+        }
+        writeln!(f, ")")?;
+    }
+    writeln!(f, "}}")?;
+    Ok(())
+}
+
+fn fmt_globals(f: &mut Formatter<'_>, program: &IrProgram) -> fmt::Result {
+    if program.globals.is_empty() {
+        return Ok(());
+    }
+
+    writeln!(f, "globals {{")?;
+    for global in &program.globals {
+        writeln!(f, "  {}: {:?} = {:?}", global.name, global.ty, global.init)?;
+    }
+    writeln!(f, "}}")?;
+    Ok(())
+}
+
+fn fmt_module_init(f: &mut Formatter<'_>, program: &IrProgram) -> fmt::Result {
+    if let Some(module_init) = &program.module_init {
+        writeln!(f, "module_init {:?}", module_init.function)?;
+    }
+    Ok(())
 }
 
 fn fmt_function(f: &mut Formatter<'_>, function: &IrFunction) -> fmt::Result {

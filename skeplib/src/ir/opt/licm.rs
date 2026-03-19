@@ -35,10 +35,7 @@ pub fn run(program: &mut IrProgram) -> bool {
                 };
                 let mut split_at = 0usize;
                 for instr in &func.blocks[loop_idx].instrs {
-                    if matches!(
-                        instr,
-                        crate::ir::Instr::Const { .. } | crate::ir::Instr::MakeClosure { .. }
-                    ) {
+                    if matches!(instr, crate::ir::Instr::Const { .. }) {
                         split_at += 1;
                     } else {
                         break;
