@@ -1,13 +1,13 @@
 use crate::codegen::CodegenError;
-use crate::codegen::llvm::calls::{self, DirectCall};
+use crate::codegen::llvm::calls;
 use crate::codegen::llvm::function;
+use crate::codegen::llvm::instr_core;
 use crate::codegen::llvm::instr_scalar;
 use crate::codegen::llvm::module;
 use crate::codegen::llvm::runtime;
 use crate::codegen::llvm::strings::collect_string_literals;
 use crate::codegen::llvm::terminator;
-use crate::codegen::llvm::types::llvm_ty;
-use crate::codegen::llvm::value::{ValueNames, llvm_symbol, operand_load};
+use crate::codegen::llvm::value::{ValueNames, llvm_symbol};
 use crate::ir::{Instr, IrFunction, IrProgram};
 use std::collections::HashMap;
 
@@ -107,85 +107,32 @@ impl<'a> LlvmEmitter<'a> {
         )? {
             return Ok(());
         }
+        if instr_core::emit_core_instr(
+            self.program,
+            func,
+            names,
+            instr,
+            lines,
+            counter,
+            &self.string_literals,
+        )? {
+            return Ok(());
+        }
         match instr {
             Instr::Const { .. }
             | Instr::Copy { .. }
             | Instr::Unary { .. }
             | Instr::Binary { .. }
-            | Instr::Compare { .. } => unreachable!("scalar instructions handled earlier"),
-            Instr::LoadGlobal { dst, ty, global } => {
-                let dest = names.temp(*dst)?;
-                lines.push(format!(
-                    "  {dest} = load {}, ptr @g{}, align 8",
-                    llvm_ty(ty)?,
-                    global.0
-                ));
-            }
-            Instr::StoreGlobal { global, ty, value } => {
-                let value = operand_load(
-                    names,
-                    value,
-                    func,
-                    lines,
-                    counter,
-                    ty,
-                    &self.string_literals,
-                )?;
-                lines.push(format!(
-                    "  store {} {value}, ptr @g{}, align 8",
-                    llvm_ty(ty)?,
-                    global.0
-                ));
-            }
-            Instr::LoadLocal { dst, ty, local } => {
-                let dest = names.temp(*dst)?;
-                lines.push(format!(
-                    "  {dest} = load {}, ptr %local{}, align 8",
-                    llvm_ty(ty)?,
-                    local.0
-                ));
-            }
-            Instr::StoreLocal { local, ty, value } => {
-                let value = operand_load(
-                    names,
-                    value,
-                    func,
-                    lines,
-                    counter,
-                    ty,
-                    &self.string_literals,
-                )?;
-                lines.push(format!(
-                    "  store {} {value}, ptr %local{}, align 8",
-                    llvm_ty(ty)?,
-                    local.0
-                ));
-            }
+            | Instr::Compare { .. }
+            | Instr::LoadGlobal { .. }
+            | Instr::StoreGlobal { .. }
+            | Instr::LoadLocal { .. }
+            | Instr::StoreLocal { .. }
+            | Instr::CallDirect { .. } => unreachable!("scalar/core instructions handled earlier"),
             Instr::Logic { .. } => {
                 return Err(CodegenError::Unsupported(
                     "Logic instructions should be lowered to control flow before LLVM emission",
                 ));
-            }
-            Instr::CallDirect {
-                dst,
-                ret_ty,
-                function,
-                args,
-            } => {
-                calls::emit_direct_call(
-                    self.program,
-                    func,
-                    names,
-                    DirectCall {
-                        dst: *dst,
-                        ret_ty,
-                        function: *function,
-                        args,
-                    },
-                    lines,
-                    counter,
-                    &self.string_literals,
-                )?;
             }
             Instr::CallBuiltin {
                 dst,
