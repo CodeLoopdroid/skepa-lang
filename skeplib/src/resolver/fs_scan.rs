@@ -8,7 +8,7 @@ use super::{ImportTarget, ModuleId, ResolveError, ResolveErrorKind};
 pub fn module_id_from_relative_path(path: &Path) -> Result<ModuleId, ResolveError> {
     if path.extension().and_then(|e| e.to_str()) != Some("sk") {
         return Err(ResolveError::new(
-            ResolveErrorKind::MissingModule,
+            ResolveErrorKind::InvalidModulePath,
             format!("Expected .sk module path, got {}", path.display()),
             Some(path.to_path_buf()),
         ));
@@ -32,7 +32,7 @@ pub fn module_id_from_relative_path(path: &Path) -> Result<ModuleId, ResolveErro
 
     if parts.is_empty() {
         return Err(ResolveError::new(
-            ResolveErrorKind::MissingModule,
+            ResolveErrorKind::InvalidModulePath,
             format!("Cannot derive module id from path {}", path.display()),
             Some(path.to_path_buf()),
         ));

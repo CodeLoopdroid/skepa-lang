@@ -74,6 +74,35 @@ fn main() -> Int {
 }
 
 #[test]
+fn sema_project_accepts_function_value_via_qualified_import_namespace_path() {
+    let root = common::make_temp_dir("qualified_import_fn_value");
+    fs::create_dir_all(root.join("utils")).expect("create utils folder");
+    fs::write(
+        root.join("utils").join("math.sk"),
+        r#"
+fn add(a: Int, b: Int) -> Int { return a + b; }
+export { add };
+"#,
+    )
+    .expect("write module");
+    fs::write(
+        root.join("main.sk"),
+        r#"
+import utils.math;
+fn main() -> Int {
+  let f: Fn(Int, Int) -> Int = utils.math.add;
+  return f(1, 2);
+}
+"#,
+    )
+    .expect("write main");
+
+    let (res, diags) = analyze_project_entry(&root.join("main.sk")).expect("resolver/sema");
+    common::assert_sema_success(&res, &diags);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn sema_project_stops_after_parse_errors_without_project_sema_cascades() {
     let root = common::make_temp_dir("project_parse_short_circuit");
     fs::write(

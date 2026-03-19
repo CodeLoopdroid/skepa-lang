@@ -6,6 +6,76 @@ use crate::types::TypeInfo;
 use super::Checker;
 
 impl Checker {
+    fn expr_to_path_parts(expr: &Expr) -> Option<Vec<String>> {
+        match expr {
+            Expr::Ident(name) => Some(vec![name.clone()]),
+            Expr::Path(parts) => Some(parts.clone()),
+            Expr::Field { base, field } => {
+                let mut parts = Self::expr_to_path_parts(base)?;
+                parts.push(field.clone());
+                Some(parts)
+            }
+            _ => None,
+        }
+    }
+
+    fn check_path_expr(
+        &mut self,
+        parts: &[String],
+        scopes: &mut [HashMap<String, TypeInfo>],
+    ) -> TypeInfo {
+        if parts.len() == 2
+            && matches!(
+                parts[0].as_str(),
+                "io" | "str" | "arr" | "datetime" | "random" | "os" | "fs" | "vec"
+            )
+        {
+            self.error(format!(
+                "Builtin path `{}` is not a value; call it as a function",
+                parts.join(".")
+            ));
+            return TypeInfo::Unknown;
+        }
+
+        let joined = parts.join(".");
+        let mut lookup_keys = vec![joined.clone()];
+        if let Some(prefix) = self.module_namespaces.get(&parts[0]) {
+            let mut expanded = prefix.clone();
+            expanded.extend_from_slice(&parts[1..]);
+            let expanded_joined = expanded.join(".");
+            if expanded_joined != joined {
+                lookup_keys.push(expanded_joined);
+            }
+        }
+
+        for key in &lookup_keys {
+            if let Some(sig) = self.functions.get(key) {
+                return TypeInfo::Fn {
+                    params: sig.params.clone(),
+                    ret: Box::new(sig.ret.clone()),
+                };
+            }
+            if let Some(ty) = self.globals.get(key) {
+                return ty.clone();
+            }
+        }
+
+        if let Some(sig) = self.functions.get(&joined) {
+            return TypeInfo::Fn {
+                params: sig.params.clone(),
+                ret: Box::new(sig.ret.clone()),
+            };
+        }
+        if self.resolve_named_type_name(&joined).is_some() {
+            self.error(format!("Type path `{joined}` is not a value expression"));
+            return TypeInfo::Unknown;
+        }
+
+        let _ = scopes;
+        self.error(format!("Unknown path `{joined}`"));
+        TypeInfo::Unknown
+    }
+
     pub(super) fn check_expr(
         &mut self,
         expr: &Expr,
@@ -17,22 +87,7 @@ impl Checker {
             Expr::BoolLit(_) => TypeInfo::Bool,
             Expr::StringLit(_) => TypeInfo::String,
             Expr::Ident(name) => self.lookup_var(name, scopes),
-            Expr::Path(parts) => {
-                if parts.len() == 2
-                    && (parts[0] == "io"
-                        || parts[0] == "str"
-                        || parts[0] == "arr"
-                        || parts[0] == "datetime"
-                        || parts[0] == "random"
-                        || parts[0] == "os"
-                        || parts[0] == "fs"
-                        || parts[0] == "vec")
-                {
-                    return TypeInfo::Unknown;
-                }
-                self.error(format!("Unknown path `{}`", parts.join(".")));
-                TypeInfo::Unknown
-            }
+            Expr::Path(parts) => self.check_path_expr(parts, scopes),
             Expr::Group(inner) => self.check_expr(inner, scopes),
             Expr::Unary { op, expr } => {
                 let ty = self.check_expr(expr, scopes);
@@ -118,6 +173,16 @@ impl Checker {
                 }
             }
             Expr::Field { base, field } => {
+                if let Some(parts) = Self::expr_to_path_parts(expr)
+                    && parts.len() >= 2
+                    && (self.module_namespaces.contains_key(&parts[0])
+                        || matches!(
+                            parts[0].as_str(),
+                            "io" | "str" | "arr" | "datetime" | "random" | "os" | "fs" | "vec"
+                        ))
+                {
+                    return self.check_path_expr(&parts, scopes);
+                }
                 let base_ty = self.check_expr(base, scopes);
                 match base_ty {
                     TypeInfo::Named(struct_name) => {

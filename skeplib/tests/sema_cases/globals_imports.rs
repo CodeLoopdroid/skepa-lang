@@ -132,3 +132,20 @@ fn main() -> Int {
             .contains("Invalid namespace call `string.toUpper`")
     }));
 }
+
+#[test]
+fn sema_rejects_builtin_path_used_as_value_expression() {
+    let src = r#"
+import str;
+fn main() -> Int {
+  let f = str.len;
+  return 0;
+}
+"#;
+    let (result, diags) = analyze_source(src);
+    assert!(result.has_errors);
+    assert!(diags.as_slice().iter().any(|d| {
+        d.message
+            .contains("Builtin path `str.len` is not a value; call it as a function")
+    }));
+}

@@ -48,7 +48,8 @@ fn module_id_from_relative_path_uses_dot_notation() {
 #[test]
 fn module_id_from_relative_path_rejects_non_sk_extension() {
     let err = module_id_from_relative_path(Path::new("utils/math.txt")).expect_err("must fail");
-    assert_eq!(err.kind, ResolveErrorKind::MissingModule);
+    assert_eq!(err.kind, ResolveErrorKind::InvalidModulePath);
+    assert_eq!(err.code, "E-MOD-PATH");
 }
 
 #[test]
@@ -192,6 +193,9 @@ fn resolve_error_codes_distinguish_duplicate_io_and_path_failures() {
 
     let path_err = ResolveError::new(ResolveErrorKind::NonUtf8Path, "path", None);
     assert_eq!(path_err.code, "E-MOD-PATH");
+
+    let invalid_path_err = ResolveError::new(ResolveErrorKind::InvalidModulePath, "bad", None);
+    assert_eq!(invalid_path_err.code, "E-MOD-PATH");
 
     let dup_err = ResolveError::new(ResolveErrorKind::DuplicateModuleId, "dup", None);
     assert_eq!(dup_err.code, "E-MOD-DUPLICATE");
