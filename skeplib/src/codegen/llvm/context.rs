@@ -2,6 +2,7 @@ use crate::codegen::CodegenError;
 use crate::codegen::llvm::calls;
 use crate::codegen::llvm::function;
 use crate::codegen::llvm::instr_core;
+use crate::codegen::llvm::instr_runtime;
 use crate::codegen::llvm::instr_scalar;
 use crate::codegen::llvm::module;
 use crate::codegen::llvm::runtime;
@@ -118,6 +119,17 @@ impl<'a> LlvmEmitter<'a> {
         )? {
             return Ok(());
         }
+        if instr_runtime::emit_runtime_instr(
+            self.program,
+            func,
+            names,
+            instr,
+            lines,
+            counter,
+            &self.string_literals,
+        )? {
+            return Ok(());
+        }
         match instr {
             Instr::Const { .. }
             | Instr::Copy { .. }
@@ -128,258 +140,28 @@ impl<'a> LlvmEmitter<'a> {
             | Instr::StoreGlobal { .. }
             | Instr::LoadLocal { .. }
             | Instr::StoreLocal { .. }
-            | Instr::CallDirect { .. } => unreachable!("scalar/core instructions handled earlier"),
-            Instr::Logic { .. } => {
-                return Err(CodegenError::Unsupported(
-                    "Logic instructions should be lowered to control flow before LLVM emission",
-                ));
+            | Instr::CallDirect { .. }
+            | Instr::CallBuiltin { .. }
+            | Instr::MakeClosure { .. }
+            | Instr::CallIndirect { .. }
+            | Instr::MakeArray { .. }
+            | Instr::MakeArrayRepeat { .. }
+            | Instr::ArrayGet { .. }
+            | Instr::ArraySet { .. }
+            | Instr::VecNew { .. }
+            | Instr::VecLen { .. }
+            | Instr::VecPush { .. }
+            | Instr::VecGet { .. }
+            | Instr::VecSet { .. }
+            | Instr::VecDelete { .. }
+            | Instr::MakeStruct { .. }
+            | Instr::StructGet { .. }
+            | Instr::StructSet { .. } => {
+                unreachable!("scalar/core/runtime instructions handled earlier")
             }
-            Instr::CallBuiltin {
-                dst,
-                ret_ty,
-                builtin,
-                args,
-            } => {
-                runtime::emit_builtin_call(
-                    func,
-                    names,
-                    runtime::BuiltinCallInstr {
-                        dst: *dst,
-                        ret_ty,
-                        builtin,
-                        args,
-                    },
-                    lines,
-                    counter,
-                    &self.string_literals,
-                )?;
-            }
-            Instr::MakeClosure { dst, function } => {
-                let dest = names.temp(*dst)?;
-                lines.push(format!("  {dest} = add i32 0, {}", function.0));
-            }
-            Instr::CallIndirect {
-                dst,
-                ret_ty,
-                callee,
-                args,
-            } => {
-                runtime::emit_indirect_call(
-                    func,
-                    names,
-                    *dst,
-                    ret_ty,
-                    callee,
-                    args,
-                    lines,
-                    counter,
-                    &self.string_literals,
-                )?;
-            }
-            Instr::MakeArray {
-                dst,
-                elem_ty,
-                items,
-            } => {
-                runtime::emit_make_array(
-                    func,
-                    names,
-                    *dst,
-                    elem_ty,
-                    items,
-                    lines,
-                    counter,
-                    &self.string_literals,
-                )?;
-            }
-            Instr::MakeArrayRepeat {
-                dst,
-                elem_ty,
-                value,
-                size,
-            } => {
-                runtime::emit_make_array_repeat(
-                    func,
-                    names,
-                    *dst,
-                    elem_ty,
-                    value,
-                    *size,
-                    lines,
-                    counter,
-                    &self.string_literals,
-                )?;
-            }
-            Instr::ArrayGet {
-                dst,
-                elem_ty,
-                array,
-                index,
-            } => {
-                runtime::emit_array_get(
-                    func,
-                    names,
-                    *dst,
-                    elem_ty,
-                    array,
-                    index,
-                    lines,
-                    counter,
-                    &self.string_literals,
-                )?;
-            }
-            Instr::ArraySet {
-                elem_ty,
-                array,
-                index,
-                value,
-            } => {
-                runtime::emit_array_set(
-                    func,
-                    names,
-                    elem_ty,
-                    array,
-                    index,
-                    value,
-                    lines,
-                    counter,
-                    &self.string_literals,
-                )?;
-            }
-            Instr::VecNew { dst, .. } => {
-                runtime::emit_vec_new(names, *dst, lines)?;
-            }
-            Instr::VecLen { dst, vec } => {
-                runtime::emit_vec_len(
-                    func,
-                    names,
-                    *dst,
-                    vec,
-                    lines,
-                    counter,
-                    &self.string_literals,
-                )?;
-            }
-            Instr::VecPush { vec, value } => {
-                runtime::emit_vec_push(
-                    func,
-                    names,
-                    &crate::ir::IrType::Unknown,
-                    vec,
-                    value,
-                    lines,
-                    counter,
-                    &self.string_literals,
-                )?;
-            }
-            Instr::VecGet {
-                dst,
-                elem_ty,
-                vec,
-                index,
-            } => {
-                runtime::emit_vec_get(
-                    func,
-                    names,
-                    *dst,
-                    elem_ty,
-                    vec,
-                    index,
-                    lines,
-                    counter,
-                    &self.string_literals,
-                )?;
-            }
-            Instr::VecSet {
-                elem_ty,
-                vec,
-                index,
-                value,
-            } => {
-                runtime::emit_vec_set(
-                    func,
-                    names,
-                    elem_ty,
-                    vec,
-                    index,
-                    value,
-                    lines,
-                    counter,
-                    &self.string_literals,
-                )?;
-            }
-            Instr::VecDelete {
-                dst,
-                elem_ty,
-                vec,
-                index,
-            } => {
-                runtime::emit_vec_delete(
-                    func,
-                    names,
-                    *dst,
-                    elem_ty,
-                    vec,
-                    index,
-                    lines,
-                    counter,
-                    &self.string_literals,
-                )?;
-            }
-            Instr::MakeStruct {
-                dst,
-                struct_id,
-                fields,
-            } => {
-                runtime::emit_make_struct(
-                    self.program,
-                    func,
-                    names,
-                    *dst,
-                    *struct_id,
-                    fields,
-                    lines,
-                    counter,
-                    &self.string_literals,
-                )?;
-            }
-            Instr::StructGet {
-                dst,
-                ty,
-                base,
-                field,
-            } => {
-                runtime::emit_struct_get(
-                    func,
-                    names,
-                    *dst,
-                    ty,
-                    base,
-                    field,
-                    lines,
-                    counter,
-                    &self.string_literals,
-                )?;
-            }
-            Instr::StructSet {
-                base,
-                field,
-                value,
-                ty,
-            } => {
-                runtime::emit_struct_set(
-                    func,
-                    names,
-                    ty,
-                    base,
-                    field,
-                    value,
-                    lines,
-                    counter,
-                    &self.string_literals,
-                )?;
-            }
+            Instr::Logic { .. } => Err(CodegenError::Unsupported(
+                "Logic instructions should be lowered to control flow before LLVM emission",
+            )),
         }
-        Ok(())
     }
 }

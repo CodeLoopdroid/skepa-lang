@@ -4,6 +4,7 @@ mod compare;
 mod context;
 mod function;
 mod instr_core;
+mod instr_runtime;
 mod instr_scalar;
 mod module;
 mod runtime;
