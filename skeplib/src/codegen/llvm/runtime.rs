@@ -952,8 +952,8 @@ fn emit_indirect_call_dispatch(
         out.push(format!("  ret ptr %call{}", func.id.0));
     }
     out.push("default:".into());
-    out.push("  %unit = call ptr @skp_rt_value_from_unit()".into());
-    out.push("  ret ptr %unit".into());
+    out.push("  %invalid = call ptr @skp_rt_call_function(i32 -1, i64 %argc, ptr %argv)".into());
+    out.push("  ret ptr %invalid".into());
     out.push("}".into());
     Ok(())
 }

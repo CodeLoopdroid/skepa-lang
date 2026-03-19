@@ -119,6 +119,20 @@ impl<'a> LlvmEmitter<'a> {
     fn emit_function(&self, func: &IrFunction) -> Result<Vec<String>, CodegenError> {
         let names = ValueNames::new(func);
         let ret_ty = llvm_ty(&func.ret_ty)?;
+        if func.locals.len() < func.params.len() {
+            return Err(CodegenError::InvalidIr(format!(
+                "function {} is missing parameter-backed locals",
+                func.name
+            )));
+        }
+        for (param, local) in func.params.iter().zip(func.locals.iter()) {
+            if param.ty != local.ty {
+                return Err(CodegenError::InvalidIr(format!(
+                    "function {} has mismatched parameter/local types for param {}",
+                    func.name, param.name
+                )));
+            }
+        }
         let params = func
             .params
             .iter()

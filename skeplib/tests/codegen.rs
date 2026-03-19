@@ -338,6 +338,7 @@ fn main() -> Int {
     assert!(llvm_ir.contains("declare void @skp_rt_value_free(ptr)"));
     assert!(llvm_ir.contains("icmp eq i64 %argc, 1"));
     assert!(llvm_ir.contains("call ptr @skp_rt_call_function(i32 0, i64 %argc, ptr %argv)"));
+    assert!(llvm_ir.contains("call ptr @skp_rt_call_function(i32 -1, i64 %argc, ptr %argv)"));
     assert!(llvm_ir.contains("call void @skp_rt_value_free(ptr %v"));
 
     assemble_llvm_ir(&llvm_ir, "indirect_call_runtime");
@@ -381,6 +382,27 @@ fn codegen_rejects_direct_call_return_type_mismatch_in_invalid_ir() {
     let err = codegen::compile_program_to_llvm_ir(&program).expect_err("invalid direct call");
     let msg = err.to_string();
     assert!(msg.contains("call return type mismatch"));
+}
+
+#[test]
+fn codegen_rejects_missing_parameter_backed_locals_in_invalid_ir() {
+    let mut builder = ir::IrBuilder::new();
+    let mut program = builder.begin_program();
+
+    let mut func = builder.begin_function("main", ir::IrType::Int);
+    let entry = func.entry;
+    builder.push_param(&mut func, "x", ir::IrType::Int);
+    builder.set_terminator(
+        &mut func,
+        entry,
+        ir::Terminator::Return(Some(ir::Operand::Const(ir::ConstValue::Int(0)))),
+    );
+    program.functions.push(func);
+
+    let err =
+        codegen::compile_program_to_llvm_ir(&program).expect_err("invalid param/local layout");
+    let msg = err.to_string();
+    assert!(msg.contains("missing parameter-backed locals"));
 }
 
 #[test]
