@@ -52,11 +52,7 @@ fn main() -> Int {
         .expect("run skepac");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_cli_failure_class(&output, CliFailureClass::Parse);
-    assert_diag_code_and_message(
-        &stderr,
-        "[E-PARSE][parse]",
-        "Expected `;` after return statement",
-    );
+    assert_diag_code_and_message(&stderr, "[E-PARSE]", "Expected `;` after return statement");
 }
 
 #[test]

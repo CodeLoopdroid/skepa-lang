@@ -1,5 +1,6 @@
 use super::*;
 use crate::common::assert_no_diags;
+use skeplib::resolver::ResolveError;
 
 #[test]
 fn resolver_graph_types_construct_cleanly() {
@@ -143,4 +144,49 @@ fn main() -> Int { return 0; }
         errs.iter()
             .any(|e| e.message.contains("Duplicate exported target name `x`"))
     );
+    assert!(
+        errs.iter()
+            .any(|e| e.kind == ResolveErrorKind::ImportConflict)
+    );
+}
+
+#[test]
+fn resolve_project_reports_parse_errors_and_does_not_mask_them_as_missing_module() {
+    let root = make_temp_dir("parse_failure");
+    fs::write(
+        root.join("main.sk"),
+        r#"
+fn main() -> Int {
+  let x = ;
+  return 0;
+}
+"#,
+    )
+    .expect("write malformed entry");
+
+    let errs = resolve_project(&root.join("main.sk")).expect_err("parse should fail resolution");
+    assert!(errs.iter().any(|e| e.kind == ResolveErrorKind::Parse));
+    assert!(errs.iter().any(|e| e.code == "E-PARSE"));
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Expected expression"))
+    );
+}
+
+#[test]
+fn resolve_error_codes_distinguish_duplicate_io_and_path_failures() {
+    let io_err = ResolveError::new(ResolveErrorKind::Io, "io", None);
+    assert_eq!(io_err.code, "E-MOD-IO");
+
+    let path_err = ResolveError::new(ResolveErrorKind::NonUtf8Path, "path", None);
+    assert_eq!(path_err.code, "E-MOD-PATH");
+
+    let dup_err = ResolveError::new(ResolveErrorKind::DuplicateModuleId, "dup", None);
+    assert_eq!(dup_err.code, "E-MOD-DUPLICATE");
+
+    let conflict_err = ResolveError::new(ResolveErrorKind::ImportConflict, "conflict", None);
+    assert_eq!(conflict_err.code, "E-IMPORT-CONFLICT");
+
+    let not_exported_err = ResolveError::new(ResolveErrorKind::NotExported, "missing", None);
+    assert_eq!(not_exported_err.code, "E-IMPORT-NOT-EXPORTED");
 }

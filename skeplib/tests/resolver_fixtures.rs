@@ -50,6 +50,9 @@ fn all_invalid_resolver_fixtures_fail_with_expected_kind() {
             "Cycle" => e.kind == ResolveErrorKind::Cycle,
             "DuplicateModuleId" => e.kind == ResolveErrorKind::DuplicateModuleId,
             "Io" => e.kind == ResolveErrorKind::Io,
+            "Parse" => e.kind == ResolveErrorKind::Parse,
+            "ImportConflict" => e.kind == ResolveErrorKind::ImportConflict,
+            "NotExported" => e.kind == ResolveErrorKind::NotExported,
             _ => false,
         });
         assert!(

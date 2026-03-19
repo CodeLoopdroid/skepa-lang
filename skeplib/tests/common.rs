@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use skepart::{RtErrorKind, RtValue};
@@ -304,11 +305,15 @@ fn temp_artifact_path(label: &str, ext: &str) -> PathBuf {
     std::env::temp_dir().join(format!("skepa_{label}_{}.{ext}", unique_suffix()))
 }
 
-fn unique_suffix() -> u128 {
-    SystemTime::now()
+fn unique_suffix() -> String {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
-        .as_nanos()
+        .as_nanos();
+    let pid = std::process::id();
+    let seq = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    format!("{pid}_{nanos}_{seq}")
 }
 
 fn exe_ext() -> &'static str {

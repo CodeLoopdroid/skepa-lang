@@ -4,7 +4,10 @@ use std::path::Path;
 use crate::ast::{ImportDecl, Program};
 use crate::diagnostic::{DiagnosticBag, Span};
 use crate::parser::Parser;
-use crate::resolver::{ModuleGraph, ModuleId, ResolveError, build_export_maps, resolve_project};
+use crate::resolver::{
+    ModuleGraph, ModuleId, ResolveError, build_export_maps, resolve_import_module_targets,
+    resolve_project,
+};
 use crate::types::{FunctionSig, TypeInfo};
 
 use super::{Checker, SemaResult, infer_module_global_types};
@@ -127,22 +130,6 @@ fn analyze_project_graph_phased_impl(
         parse_diags_all,
         sema_diags_all,
     )
-}
-
-fn resolve_import_module_targets(graph: &ModuleGraph, import_path: &[String]) -> Vec<ModuleId> {
-    let import_id = import_path.join(".");
-    if graph.modules.contains_key(&import_id) {
-        return vec![import_id];
-    }
-    let prefix = format!("{import_id}.");
-    let mut matches = graph
-        .modules
-        .keys()
-        .filter(|id| id.starts_with(&prefix))
-        .cloned()
-        .collect::<Vec<_>>();
-    matches.sort();
-    matches
 }
 
 fn build_module_api(program: &Program) -> ModuleApi {
@@ -291,18 +278,26 @@ fn build_external_context(
             ImportDecl::ImportModule { path, .. } => {
                 let targets = resolve_import_module_targets(graph, path);
                 for target in targets {
-                    let Some(exports) = export_maps.get(&target) else {
+                    let target_id = target.clone();
+                    let Some(exports) = export_maps.get(&target_id) else {
                         continue;
                     };
                     for (exported_name, sym) in exports {
                         let Some(api) = apis.get(&sym.module_id) else {
                             continue;
                         };
-                        let q = format!("{target}.{exported_name}");
+                        let q = format!("{target_id}.{exported_name}");
                         match sym.kind {
                             crate::resolver::SymbolKind::Fn => {
                                 if let Some(sig) = api.functions.get(&sym.local_name).cloned() {
-                                    ctx.imported_functions.insert(q, sig);
+                                    ctx.imported_functions.insert(q, sig.clone());
+                                    if target_id
+                                        .rsplit('.')
+                                        .next()
+                                        .is_some_and(|leaf| leaf == exported_name)
+                                    {
+                                        ctx.imported_functions.insert(target_id.clone(), sig);
+                                    }
                                 }
                             }
                             crate::resolver::SymbolKind::Struct => {

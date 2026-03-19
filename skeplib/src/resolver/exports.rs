@@ -7,7 +7,7 @@ use crate::parser::Parser;
 use super::support::suggest_name;
 use super::{
     ExportMap, ModuleGraph, ModuleId, ModuleSymbols, ResolveError, ResolveErrorKind, SymbolKind,
-    SymbolRef,
+    SymbolRef, parse_diagnostics_to_resolve_errors,
 };
 
 pub fn build_export_maps(
@@ -52,7 +52,16 @@ pub fn build_export_maps(
         };
         marks.insert(id.to_string(), Mark::Visiting);
         stack.push(id.to_string());
-        let (program, _diags) = Parser::parse_source(&unit.source);
+        let (program, parse_diags) = Parser::parse_source(&unit.source);
+        if !parse_diags.is_empty() {
+            errors.extend(parse_diagnostics_to_resolve_errors(
+                &unit.path,
+                &parse_diags,
+            ));
+            stack.pop();
+            marks.insert(id.to_string(), Mark::Done);
+            return;
+        }
         let symbols = collect_module_symbols(&program, id);
         let mut map = match validate_and_build_export_map(&program, &symbols, id, &unit.path) {
             Ok(m) => m,
@@ -107,30 +116,24 @@ pub fn build_export_maps(
                                     unit.path.display()
                                 )
                             };
-                            errors.push(
-                                ResolveError::new(
-                                    ResolveErrorKind::MissingModule,
-                                    msg,
-                                    Some(unit.path.clone()),
-                                )
-                                .with_code("E-IMPORT-NOT-EXPORTED"),
-                            );
+                            errors.push(ResolveError::new(
+                                ResolveErrorKind::NotExported,
+                                msg,
+                                Some(unit.path.clone()),
+                            ));
                             continue;
                         };
                         if map.insert(export_name.clone(), sym).is_some() {
-                            errors.push(
-                                ResolveError::new(
-                                    ResolveErrorKind::DuplicateModuleId,
-                                    format!(
-                                        "Duplicate exported target name `{}` in module `{}` ({})",
-                                        export_name,
-                                        id,
-                                        unit.path.display()
-                                    ),
-                                    Some(unit.path.clone()),
-                                )
-                                .with_code("E-IMPORT-CONFLICT"),
-                            );
+                            errors.push(ResolveError::new(
+                                ResolveErrorKind::ImportConflict,
+                                format!(
+                                    "Duplicate exported target name `{}` in module `{}` ({})",
+                                    export_name,
+                                    id,
+                                    unit.path.display()
+                                ),
+                                Some(unit.path.clone()),
+                            ));
                         }
                     }
                 }
@@ -156,19 +159,16 @@ pub fn build_export_maps(
                     };
                     for (name, sym) in dep_map {
                         if map.insert(name.clone(), sym.clone()).is_some() {
-                            errors.push(
-                                ResolveError::new(
-                                    ResolveErrorKind::DuplicateModuleId,
-                                    format!(
-                                        "Duplicate exported target name `{}` in module `{}` ({})",
-                                        name,
-                                        id,
-                                        unit.path.display()
-                                    ),
-                                    Some(unit.path.clone()),
-                                )
-                                .with_code("E-IMPORT-CONFLICT"),
-                            );
+                            errors.push(ResolveError::new(
+                                ResolveErrorKind::ImportConflict,
+                                format!(
+                                    "Duplicate exported target name `{}` in module `{}` ({})",
+                                    name,
+                                    id,
+                                    unit.path.display()
+                                ),
+                                Some(unit.path.clone()),
+                            ));
                         }
                     }
                 }
@@ -193,7 +193,7 @@ pub fn build_export_maps(
     }
 }
 
-pub(super) fn resolve_import_module_targets(
+pub(crate) fn resolve_import_module_targets(
     graph: &ModuleGraph,
     import_path: &[String],
 ) -> Vec<ModuleId> {
@@ -218,7 +218,14 @@ pub(super) fn validate_import_bindings(
 ) -> Vec<ResolveError> {
     let mut errors = Vec::new();
     for (id, unit) in &graph.modules {
-        let (program, _diags) = Parser::parse_source(&unit.source);
+        let (program, parse_diags) = Parser::parse_source(&unit.source);
+        if !parse_diags.is_empty() {
+            errors.extend(parse_diagnostics_to_resolve_errors(
+                &unit.path,
+                &parse_diags,
+            ));
+            continue;
+        }
         let mut bound_names = HashMap::<String, String>::new();
 
         for import in &program.imports {
@@ -229,14 +236,13 @@ pub(super) fn validate_import_bindings(
                             bound_names.insert(a.clone(), "module alias".to_string())
                     {
                         errors.push(ResolveError::new(
-                            ResolveErrorKind::DuplicateModuleId,
+                            ResolveErrorKind::ImportConflict,
                             format!(
                                 "Duplicate imported binding `{}` in module `{}` ({}) (conflicts with {})",
                                 a, id, unit.path.display(), prev
                             ),
                             Some(unit.path.clone()),
-                        )
-                        .with_code("E-IMPORT-CONFLICT"));
+                        ));
                     }
                     let _ = resolve_import_module_targets(graph, path);
                 }
@@ -286,14 +292,13 @@ pub(super) fn validate_import_bindings(
                                 .insert(local.clone(), "from-import wildcard".to_string())
                             {
                                 errors.push(ResolveError::new(
-                                    ResolveErrorKind::DuplicateModuleId,
+                                    ResolveErrorKind::ImportConflict,
                                     format!(
                                         "Duplicate imported binding `{}` in module `{}` ({}) (conflicts with {})",
                                         local, id, unit.path.display(), prev
                                     ),
                                     Some(unit.path.clone()),
-                                )
-                                .with_code("E-IMPORT-CONFLICT"));
+                                ));
                             }
                         }
                     } else {
@@ -328,14 +333,11 @@ pub(super) fn validate_import_bindings(
                                         target_path
                                     )
                                 };
-                                errors.push(
-                                    ResolveError::new(
-                                        ResolveErrorKind::MissingModule,
-                                        msg,
-                                        Some(unit.path.clone()),
-                                    )
-                                    .with_code("E-IMPORT-NOT-EXPORTED"),
-                                );
+                                errors.push(ResolveError::new(
+                                    ResolveErrorKind::NotExported,
+                                    msg,
+                                    Some(unit.path.clone()),
+                                ));
                                 continue;
                             }
                             let local = item.alias.clone().unwrap_or_else(|| item.name.clone());
@@ -343,14 +345,13 @@ pub(super) fn validate_import_bindings(
                                 bound_names.insert(local.clone(), "from-import".to_string())
                             {
                                 errors.push(ResolveError::new(
-                                    ResolveErrorKind::DuplicateModuleId,
+                                    ResolveErrorKind::ImportConflict,
                                     format!(
                                         "Duplicate imported binding `{}` in module `{}` ({}) (conflicts with {})",
                                         local, id, unit.path.display(), prev
                                     ),
                                     Some(unit.path.clone()),
-                                )
-                                .with_code("E-IMPORT-CONFLICT"));
+                                ));
                             }
                         }
                     }
@@ -431,7 +432,7 @@ pub fn validate_and_build_export_map(
                 let Some(sym) = sym else {
                     errors.push(
                         ResolveError::new(
-                            ResolveErrorKind::MissingModule,
+                            ResolveErrorKind::NotExported,
                             format!(
                                 "Exported name `{}` does not exist in module `{}` ({})",
                                 item.name,
@@ -446,19 +447,16 @@ pub fn validate_and_build_export_map(
                 };
 
                 if export_map.insert(export_name.clone(), sym).is_some() {
-                    errors.push(
-                        ResolveError::new(
-                            ResolveErrorKind::DuplicateModuleId,
-                            format!(
-                                "Duplicate exported target name `{}` in module `{}` ({})",
-                                export_name,
-                                module_id,
-                                module_path.display()
-                            ),
-                            Some(module_path.to_path_buf()),
-                        )
-                        .with_code("E-IMPORT-CONFLICT"),
-                    );
+                    errors.push(ResolveError::new(
+                        ResolveErrorKind::ImportConflict,
+                        format!(
+                            "Duplicate exported target name `{}` in module `{}` ({})",
+                            export_name,
+                            module_id,
+                            module_path.display()
+                        ),
+                        Some(module_path.to_path_buf()),
+                    ));
                 }
             }
         }

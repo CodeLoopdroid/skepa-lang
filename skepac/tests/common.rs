@@ -61,8 +61,14 @@ pub fn assert_cli_failure_class(output: &Output, class: CliFailureClass) {
             assert!(stderr.contains("Failed to read"), "stderr was: {stderr}");
         }
         CliFailureClass::Parse => {
-            assert_eq!(output.status.code(), Some(10), "{output:?}");
-            assert!(stderr.contains("[E-PARSE][parse]"), "stderr was: {stderr}");
+            assert!(
+                output.status.code() == Some(10) || output.status.code() == Some(15),
+                "{output:?}"
+            );
+            assert!(
+                stderr.contains("[E-PARSE][parse]") || stderr.contains("[E-PARSE][resolve]"),
+                "stderr was: {stderr}"
+            );
         }
         CliFailureClass::Sema => {
             assert_eq!(output.status.code(), Some(11), "{output:?}");

@@ -87,19 +87,14 @@ fn main() -> Int {
     )
     .expect("write main");
 
-    let (res, parse_diags, sema_diags) =
-        analyze_project_entry_phased(&root.join("main.sk")).expect("resolver/sema");
-    assert!(res.has_errors);
+    let errs = analyze_project_entry_phased(&root.join("main.sk")).expect_err("parse should fail");
     assert!(
-        parse_diags
-            .as_slice()
-            .iter()
-            .any(|d| d.message.contains("Expected expression"))
+        errs.iter()
+            .any(|e| e.kind == skeplib::resolver::ResolveErrorKind::Parse)
     );
     assert!(
-        sema_diags.is_empty(),
-        "unexpected sema diags: {:?}",
-        sema_diags
+        errs.iter()
+            .any(|e| e.message.contains("Expected expression"))
     );
     let _ = fs::remove_dir_all(root);
 }

@@ -7,11 +7,13 @@ use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::diagnostic::DiagnosticBag;
 use crate::parser::Parser;
 
 use self::exports::validate_import_bindings;
 use self::support::with_importer_context;
 
+pub(crate) use self::exports::resolve_import_module_targets;
 pub use self::exports::{build_export_maps, collect_module_symbols, validate_and_build_export_map};
 pub use self::fs_scan::{
     collect_import_module_paths, module_id_from_relative_path, module_path_from_import,
@@ -63,6 +65,9 @@ pub enum ResolveErrorKind {
     Codegen,
     NonUtf8Path,
     DuplicateModuleId,
+    Parse,
+    ImportConflict,
+    NotExported,
     Cycle,
 }
 
@@ -106,10 +111,31 @@ fn code_for_kind(kind: ResolveErrorKind) -> &'static str {
         ResolveErrorKind::Cycle => "E-MOD-CYCLE",
         ResolveErrorKind::AmbiguousModule => "E-MOD-AMBIG",
         ResolveErrorKind::Codegen => "E-CODEGEN",
-        ResolveErrorKind::Io
-        | ResolveErrorKind::NonUtf8Path
-        | ResolveErrorKind::DuplicateModuleId => "E-MOD-NOT-FOUND",
+        ResolveErrorKind::Io => "E-MOD-IO",
+        ResolveErrorKind::NonUtf8Path => "E-MOD-PATH",
+        ResolveErrorKind::DuplicateModuleId => "E-MOD-DUPLICATE",
+        ResolveErrorKind::Parse => "E-PARSE",
+        ResolveErrorKind::ImportConflict => "E-IMPORT-CONFLICT",
+        ResolveErrorKind::NotExported => "E-IMPORT-NOT-EXPORTED",
     }
+}
+
+pub(crate) fn parse_diagnostics_to_resolve_errors(
+    path: &Path,
+    diags: &DiagnosticBag,
+) -> Vec<ResolveError> {
+    diags
+        .as_slice()
+        .iter()
+        .map(|diag| {
+            ResolveError::new(
+                ResolveErrorKind::Parse,
+                diag.message.clone(),
+                Some(path.to_path_buf()),
+            )
+            .with_line_col(diag.span.line, diag.span.col)
+        })
+        .collect()
 }
 
 pub fn resolve_project(entry: &Path) -> Result<ModuleGraph, Vec<ResolveError>> {
@@ -169,7 +195,11 @@ pub fn resolve_project(entry: &Path) -> Result<ModuleGraph, Vec<ResolveError>> {
                 continue;
             }
         };
-        let (program, _diags) = Parser::parse_source(&source);
+        let (program, parse_diags) = Parser::parse_source(&source);
+        if !parse_diags.is_empty() {
+            errors.extend(parse_diagnostics_to_resolve_errors(&path, &parse_diags));
+            continue;
+        }
         let import_paths = collect_import_module_paths(&program);
         let mut imports = Vec::new();
 

@@ -86,7 +86,7 @@ fn main() -> Int { return add(40, 2); }
 }
 
 #[test]
-fn project_compile_failure_is_reported_as_codegen_error_for_native_path() {
+fn project_compile_failure_is_reported_as_parse_error_for_native_path() {
     let project = common::TempProject::new("codegen_error_kind");
     let entry = project.file(
         "main.sk",
@@ -98,6 +98,6 @@ fn main( -> Int { return 0; }
     let errs = ir::lowering::compile_project_entry(&entry).expect_err("expected failure");
     assert!(
         errs.iter()
-            .any(|e| { e.kind == ResolveErrorKind::Codegen && e.code == "E-CODEGEN" })
+            .any(|e| { e.kind == ResolveErrorKind::Parse && e.code == "E-PARSE" })
     );
 }
