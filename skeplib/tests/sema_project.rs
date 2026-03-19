@@ -74,6 +74,38 @@ fn main() -> Int {
 }
 
 #[test]
+fn sema_project_preserves_inferred_type_for_imported_unannotated_global() {
+    let root = common::make_temp_dir("imported_inferred_global");
+    fs::create_dir_all(root.join("config")).expect("create config folder");
+    fs::write(
+        root.join("config").join("flags.sk"),
+        r#"
+let enabled = true;
+export { enabled };
+"#,
+    )
+    .expect("write module");
+    fs::write(
+        root.join("main.sk"),
+        r#"
+from config.flags import enabled;
+
+fn main() -> Int {
+  if (enabled) {
+    return 1;
+  }
+  return 0;
+}
+"#,
+    )
+    .expect("write main");
+
+    let (res, diags) = analyze_project_entry(&root.join("main.sk")).expect("resolver/sema");
+    common::assert_sema_success(&res, &diags);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn sema_project_accepts_imported_function_in_array_and_struct_field() {
     let root = common::make_temp_dir("fn_in_array_struct");
     fs::create_dir_all(root.join("utils")).expect("create utils folder");

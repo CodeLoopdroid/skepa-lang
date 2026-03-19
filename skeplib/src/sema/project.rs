@@ -7,7 +7,7 @@ use crate::parser::Parser;
 use crate::resolver::{ModuleGraph, ModuleId, ResolveError, build_export_maps, resolve_project};
 use crate::types::{FunctionSig, TypeInfo};
 
-use super::{Checker, SemaResult};
+use super::{Checker, SemaResult, infer_module_global_types};
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct ModuleApi {
@@ -174,14 +174,7 @@ fn build_module_api(program: &Program) -> ModuleApi {
             );
         }
     }
-    for g in &program.globals {
-        api.globals.insert(
-            g.name.clone(),
-            g.ty.as_ref()
-                .map(TypeInfo::from_ast)
-                .unwrap_or(TypeInfo::Unknown),
-        );
-    }
+    api.globals = infer_module_global_types(program);
     api
 }
 

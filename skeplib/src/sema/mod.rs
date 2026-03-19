@@ -570,3 +570,12 @@ impl Checker {
         self.diagnostics.error(message, Span::default());
     }
 }
+
+pub(super) fn infer_module_global_types(program: &Program) -> HashMap<String, TypeInfo> {
+    let mut checker = Checker::new(program);
+    checker.check_struct_declarations(program);
+    checker.check_impl_declarations(program);
+    checker.collect_method_signatures(program);
+    checker.check_global_declarations(program);
+    checker.globals
+}
